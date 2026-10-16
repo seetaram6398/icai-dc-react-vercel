@@ -1,0 +1,82 @@
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #f4f6f9;
+}
+.clickable { cursor: pointer; }
+.card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.navbar-brand { font-weight: 600; }
+.table th { white-space: nowrap; }
+
+/* ---------- Popup notifications ---------- */
+.popup-container {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1090;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(520px, calc(100vw - 24px));
+  pointer-events: none;
+}
+.popup {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-left: 5px solid #0d6efd;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  padding: 14px 18px;
+  animation: popup-in 0.28s ease;
+}
+.popup-success { border-left-color: #198754; }
+.popup-error { border-left-color: #dc3545; }
+.popup-warning { border-left-color: #ffc107; }
+.popup-info { border-left-color: #0d6efd; }
+.popup-icon i {
+  font-size: 1.5rem;
+  line-height: 1.3;
+}
+.popup-success .popup-icon i { color: #198754; }
+.popup-error .popup-icon i { color: #dc3545; }
+.popup-warning .popup-icon i { color: #ffc107; }
+.popup-info .popup-icon i { color: #0d6efd; }
+.popup-content { flex: 1; min-width: 0; }
+.popup-title { font-weight: 600; font-size: 0.95rem; color: #212529; }
+.popup-message { font-size: 0.88rem; color: #495057; margin-top: 2px; line-height: 1.4; word-break: break-word; }
+.popup-close {
+  border: none;
+  background: transparent;
+  color: #adb5bd;
+  font-size: 0.9rem;
+  padding: 2px 4px;
+  margin: -2px -4px 0 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.popup-close:hover { color: #495057; background: #f1f3f5; }
+@keyframes popup-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- CKEditor (free) rich remarks ---------- */
+.rich-editor-wrap { position: relative; }
+.rich-editor-wrap .ck-editor__editable { min-height: 110px; }
+.rich-hidden-field {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  clip: rect(0 0 0 0);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.rich-remark p { margin-bottom: 0.35rem; }
+.rich-remark p:last-child { margin-bottom: 0; }

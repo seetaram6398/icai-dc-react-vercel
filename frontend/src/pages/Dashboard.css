@@ -1,0 +1,78 @@
+/* =====================================================================
+   ICAI Disciplinary Directorate - Dashboard Page Styles
+   ===================================================================== */
+
+/* ---- Filter panel ---- */
+.filter-card .form-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ds-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.4rem;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 1rem;
+}
+
+.filter-field .form-control,
+.filter-field .form-select {
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.filter-field .form-control:focus,
+.filter-field .form-select:focus {
+  border-color: var(--ds-accent);
+  box-shadow: 0 0 0 3px rgba(26, 74, 138, 0.1);
+}
+
+.filter-checks {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-bottom: 0.25rem;
+}
+
+.filter-checks .form-check {
+  margin: 0;
+}
+
+.filter-checks .form-check-input {
+  border: 1px solid #c3ccda;
+}
+
+.filter-checks .form-check-input:checked {
+  background-color: var(--ds-accent);
+  border-color: var(--ds-accent);
+}
+
+.filter-checks .form-check-label {
+  font-size: 0.875rem;
+  color: var(--ds-text);
+  font-weight: 500;
+}
+
+@media (max-width: 575.98px) {
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+#stayFilter + .form-check-label,
+#suoMotoFilter + .form-check-label {
+  display: inline;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 575.98px) {
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+}

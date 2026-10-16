@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Build files
+dist/
+build/
+
+# Logs and process files
+*.log
+*.pid
+
+# Local editor/system files
+.vscode/
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+
+# Logs and process files
+*.log
+*.pid
+*.out
+
+# Temporary files
+TheTemp/
+
+# Uploaded documents - keep local, do not commit
+/Documents/
+**/Documents/
+
+# Secrets and local dependencies
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+build/
+
+# Logs and process files
+*.log
+*.pid

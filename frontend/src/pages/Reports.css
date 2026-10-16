@@ -1,0 +1,221 @@
+/* =====================================================================
+   ICAI Disciplinary Directorate - Shared Report Page Styles
+   ===================================================================== */
+
+/* ---- Report page header icon ---- */
+.report-page-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  margin-bottom: 0.15rem;
+}
+
+.report-page-icon.tone-blue { background: #e8effa; color: #1a4a8a; }
+.report-page-icon.tone-green { background: #e5f6ec; color: #107c43; }
+.report-page-icon.tone-amber { background: #fdf3e0; color: #a16207; }
+.report-page-icon.tone-purple { background: #ede9fe; color: #6d28d9; }
+.report-page-icon.tone-red { background: #fdecec; color: #b42318; }
+
+/* ---- Page header with icon ---- */
+.report-header-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+}
+
+.report-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- View toggle tabs ---- */
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--ds-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: var(--ds-shadow);
+}
+
+.view-toggle button {
+  padding: 0.5rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ds-text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.view-toggle button:not(:last-child) {
+  border-right: 1px solid var(--ds-border);
+}
+
+.view-toggle button:hover {
+  background: #f6f9fd;
+  color: var(--ds-text);
+}
+
+.view-toggle button.active {
+  background: var(--ds-accent);
+  color: #fff;
+}
+
+.view-toggle button.active i {
+  color: #fff;
+}
+
+/* ---- Filter pills row ---- */
+.filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.filter-pills .filter-field {
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+
+/* ---- Data table enhancements ---- */
+.data-table .grand-total td {
+  background: #e8effa !important;
+  font-weight: 700;
+  color: var(--ds-accent);
+  border-top: 2px solid var(--ds-accent);
+}
+
+.data-table tbody tr.clickable {
+  cursor: pointer;
+}
+
+.data-table tbody tr.clickable:hover {
+  background: #f0f6ff;
+}
+
+.data-table .col-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table .col-num.text-end {
+  text-align: right;
+}
+
+/* ---- Stat row (summary boxes above table) ---- */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.stat-box {
+  background: #fff;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius);
+  padding: 1rem 1.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  box-shadow: var(--ds-shadow);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.stat-box:hover {
+  box-shadow: var(--ds-shadow-lg);
+  transform: translateY(-1px);
+}
+
+.stat-box-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.stat-box-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ds-text);
+}
+
+.stat-box-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ds-text-muted);
+  white-space: nowrap;
+}
+
+/* ---- Record count strip ---- */
+.record-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.record-strip .badge-soft {
+  font-size: 0.75rem;
+}
+
+/* ---- Empty state (enhanced) ---- */
+.empty-state {
+  padding: 3.5rem 1rem;
+  text-align: center;
+  color: var(--ds-text-muted);
+}
+
+.empty-state i {
+  font-size: 2.8rem;
+  color: #d0d8e4;
+  display: block;
+  margin-bottom: 0.85rem;
+}
+
+.empty-state h6 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ds-text);
+  margin-bottom: 0.35rem;
+}
+
+.empty-state p {
+  font-size: 0.84rem;
+  margin: 0;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 767.98px) {
+  .filter-pills {
+    flex-direction: column;
+  }
+  .filter-pills .filter-field {
+    flex: 1 1 100%;
+  }
+  .stat-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 575.98px) {
+  .stat-row {
+    grid-template-columns: 1fr;
+  }
+}
