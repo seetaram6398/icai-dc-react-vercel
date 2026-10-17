@@ -5,8 +5,15 @@ const { authMiddleware } = require('../services/auth');
 const router = express.Router();
 router.use(authMiddleware);
 
-// In-memory captcha store (id → { answer, expires })
-const store = new Map();
+// Stateless captcha: the "id" is an expiry + HMAC of the (lowercased) answer.
+// No server-side storage is needed, so it keeps working across serverless
+// instances on Vercel. The answer itself is never sent to the client.
+const CAPTCHA_SECRET = process.env.JWT_SECRET || 'ICAI_DC_JWT_SECRET_2026_CHANGE_ME';
+const TTL_MS = 5 * 60 * 1000;
+
+function signAnswer(answer, expires) {
+  return crypto.createHmac('sha256', CAPTCHA_SECRET).update(`${answer}.${expires}`).digest('hex');
+}
 
 function generateCaptchaText(len = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -43,19 +50,11 @@ function renderSVG(text) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }
 
-// Cleanup expired captchas every 5 min
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, entry] of store) {
-    if (entry.expires < now) store.delete(id);
-  }
-}, 5 * 60 * 1000);
-
 /** GET /api/captcha/generate — returns { id, image } */
 router.get('/generate', (req, res) => {
   const text = generateCaptchaText();
-  const id = crypto.randomBytes(16).toString('hex');
-  store.set(id, { answer: text.toLowerCase(), expires: Date.now() + 5 * 60 * 1000 });
+  const expires = Date.now() + TTL_MS;
+  const id = `${expires}.${signAnswer(text.toLowerCase(), expires)}`;
   res.json({ id, image: renderSVG(text) });
 });
 
@@ -63,10 +62,16 @@ router.get('/generate', (req, res) => {
 router.post('/verify', (req, res) => {
   const { id, answer } = req.body;
   if (!id || !answer) return res.status(400).json({ error: 'Missing captcha id or answer' });
-  const entry = store.get(id);
-  if (!entry) return res.status(400).json({ error: 'Captcha expired' });
-  store.delete(id);
-  if (entry.answer !== String(answer).trim().toLowerCase()) {
+
+  const [expiresStr, signature] = String(id).split('.');
+  const expires = Number(expiresStr);
+  if (!expires || !signature) return res.status(400).json({ error: 'Captcha expired' });
+  if (expires < Date.now()) return res.status(400).json({ error: 'Captcha expired' });
+
+  const expected = signAnswer(String(answer).trim().toLowerCase(), expires);
+  const valid = signature.length === expected.length
+    && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  if (!valid) {
     return res.status(400).json({ valid: false, error: 'Invalid captcha' });
   }
   res.json({ valid: true });

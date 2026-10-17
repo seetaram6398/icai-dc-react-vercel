@@ -55,24 +55,29 @@ app.use('/documents', documentAuth, (req, res, next) => {
 });
 
 // ================= Frontend SPA (server-side protected) =================
-const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist');
-const PUBLIC_PATHS = ['/login', '/register'];
+// On Vercel the built SPA is served as static assets from the CDN and only
+// /api/* and /documents/* are routed to this function, so the SPA handling
+// below is only needed when this server runs standalone (local dev / VM).
+if (!process.env.VERCEL) {
+  const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist');
+  const PUBLIC_PATHS = ['/login', '/register'];
 
-// Static build assets (JS/CSS/images) are served without auth — they contain no data.
-app.use(express.static(DIST_DIR, { index: false }));
+  // Static build assets (JS/CSS/images) are served without auth — they contain no data.
+  app.use(express.static(DIST_DIR, { index: false }));
 
-// Every other page requires a valid session cookie, otherwise redirect to /login.
-app.get('*', (req, res, next) => {
-  if (PUBLIC_PATHS.includes(req.path)) return next();
-  const token = req.cookies && req.cookies.icai_token;
-  if (!token || !verifyToken(token)) {
-    return res.redirect('/login');
-  }
-  next();
-}, (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.sendFile(path.join(DIST_DIR, 'index.html'));
-});
+  // Every other page requires a valid session cookie, otherwise redirect to /login.
+  app.get('*', (req, res, next) => {
+    if (PUBLIC_PATHS.includes(req.path)) return next();
+    const token = req.cookies && req.cookies.icai_token;
+    if (!token || !verifyToken(token)) {
+      return res.redirect('/login');
+    }
+    next();
+  }, (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+  });
+}
 
 // 404 handler for unknown API routes
 app.use((req, res) => {
@@ -85,9 +90,13 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`ICAI DC Backend listening on port ${PORT}`);
-});
+// On Vercel the exported app is invoked as a serverless function; only start a
+// long-running listener when running standalone (local dev / VM / container).
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`ICAI DC Backend listening on port ${PORT}`);
+  });
+}
 
 module.exports = app;
