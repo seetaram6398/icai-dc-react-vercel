@@ -53,3 +53,5 @@ build/
 # Logs and process files
 *.log
 *.pid
+.vercel
+.env*
