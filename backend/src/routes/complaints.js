@@ -1543,7 +1543,7 @@ router.put('/:id', async (req, res) => {
       for (const s of b.schedules) {
         await executeNonQuery(
           `INSERT INTO tbl_ScheduleList (CompID, Schedule, PartNo, ItemNo, MisconductDate, MisconductDateTo, MisconDate, UserID)
-           VALUES (@compId, @schedule, @partNo, @itemNo, @misconDate, @misconDateTo, @miscondate, @userId)`,
+           VALUES (@compId, @schedule, @partNo, @itemNo, @misconDate, @misconDateTo, @misconDate, @userId)`,
           {
             compId: id,
             schedule: s.schedule ?? null,
@@ -1551,7 +1551,6 @@ router.put('/:id', async (req, res) => {
             itemNo: s.itemNo ?? null,
             misconDate: s.misconductDate || s.misconductDateFrom || null,
             misconDateTo: s.misconductDateTo || null,
-            miscondate: s.misconductDate || s.misconductDateFrom || null,
             userId,
           }
         );
@@ -2011,7 +2010,7 @@ router.post('/', async (req, res) => {
       for (const s of b.schedules) {
         await executeNonQuery(
           `INSERT INTO tbl_ScheduleList (CompID, Schedule, PartNo, ItemNo, MisconductDate, MisconductDateTo, Miscondate, UserID)
-           VALUES (@compId, @schedule, @partNo, @itemNo, @misconDate, @misconDateTo, @miscondate, @userId)`,
+           VALUES (@compId, @schedule, @partNo, @itemNo, @misconDate, @misconDateTo, @misconDate, @userId)`,
           {
             compId,
             schedule: s.schedule || null,
@@ -2019,7 +2018,6 @@ router.post('/', async (req, res) => {
             itemNo: s.itemNo || null,
             misconDate: s.misconductDate || null,
             misconDateTo: s.misconductDateTo || null,
-            miscondate: s.misconductDate || null,
             userId,
           }
         );
