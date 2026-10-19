@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { uploadFile } from '../api/upload';
 import { useAuth } from '../context/AuthContext';
 import { statusText } from '../utils/statusText';
 import RichEditor from '../components/RichEditor';
@@ -144,11 +145,8 @@ function ComplaintList() {
     try {
       let attachment = null;
       if (assignFile) {
-        const fd = new FormData();
-        fd.append('file', assignFile);
-        fd.append('type', 'ddtoSO');
-        const up = await api.post('/upload', fd);
-        attachment = up.data.path || up.data.filename || null;
+        const up = await uploadFile(assignFile, 'ddtoSO');
+        attachment = up.path || up.filename || null;
       }
       await api.post(`/complaints/${assignComp.CompID}/status`, {
         statusId: 2,

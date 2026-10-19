@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { uploadFile } from '../api/upload';
 import { useAuth } from '../context/AuthContext';
 import ScrutinySheetForm from '../components/ScrutinySheetForm';
 import RichEditor from '../components/RichEditor';
@@ -654,14 +655,11 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
     }
     setRespBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', respFile);
-      fd.append('type', 'respondent');
-      const up = await api.post('/upload', fd);
+      const up = await uploadFile(respFile, 'respondent');
       const res = await api.post(`/complaints/${compId}/respondent-response`, {
         kind: choice,
         remarks: respRemarks.trim(),
-        attachment: up.data.path || up.data.filename || null,
+        attachment: up.path || up.filename || null,
       });
       popup.success(res.data.message || 'Action taken successfully.');
       setChoice('');
@@ -1017,13 +1015,10 @@ function ComplainantRejoinderCard({ compId, c, onRefresh }) {
     }
     setRejBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', rejFile);
-      fd.append('type', 'respondent');
-      const up = await api.post('/upload', fd);
+      const up = await uploadFile(rejFile, 'respondent');
       const res = await api.post(`/complaints/${compId}/complainant-rejoinder`, {
         remarks: rejRemarks.trim(),
-        attachment: up.data.path || up.data.filename || null,
+        attachment: up.path || up.filename || null,
       });
       popup.success(res.data.message || 'Action taken successfully.');
       setRejRemarks('');
@@ -1130,13 +1125,10 @@ function AdditionalDocumentCard({ compId, c, onRefresh }) {
     }
     setAdmBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', admFile);
-      fd.append('type', 'respondent');
-      const up = await api.post('/upload', fd);
+      const up = await uploadFile(admFile, 'respondent');
       await api.post(`/complaints/${compId}/additional-document`, {
         remarks: admRemarks.trim(),
-        attachment: up.data.path || up.data.filename || null,
+        attachment: up.path || up.filename || null,
       });
       popup.success('Additional document submitted. The case has been routed to the SO.');
       setAdmRemarks('');
@@ -1341,11 +1333,8 @@ export default function ComplaintDetail() {
   const workflowTransition = async ({ statusId, userToId, remarks, file, commonField, decisionValue, clubbedWithCompId }) => {
     let attachment = null;
     if (file) {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('type', 'workflow');
-      const up = await api.post('/upload', fd);
-      attachment = up.data.path || up.data.filename || null;
+      const up = await uploadFile(file, 'workflow');
+      attachment = up.path || up.filename || null;
     }
     let targetStatus = statusId;
     if (targetStatus === 'RETURN_TO_PREV') {
@@ -1456,11 +1445,8 @@ export default function ComplaintDetail() {
     try {
       let attachment = null;
       if (ddFile) {
-        const fd = new FormData();
-        fd.append('file', ddFile);
-        fd.append('type', 'ddtoSO');
-        const up = await api.post('/upload', fd);
-        attachment = up.data.path || up.data.filename || null;
+        const up = await uploadFile(ddFile, 'ddtoSO');
+        attachment = up.path || up.filename || null;
       }
       await api.post(`/complaints/${id}/status`, {
         statusId: 2,
@@ -1573,11 +1559,8 @@ export default function ComplaintDetail() {
       });
       let attachment = null;
       if (soFile) {
-        const fd = new FormData();
-        fd.append('file', soFile);
-        fd.append('type', 'soaction');
-        const up = await api.post('/upload', fd);
-        attachment = up.data.path || up.data.filename || null;
+        const up = await uploadFile(soFile, 'soaction');
+        attachment = up.path || up.filename || null;
       }
       let statusId;
       let userToId = null;
@@ -1750,11 +1733,8 @@ export default function ComplaintDetail() {
     }
     setWdBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', wdFile);
-      fd.append('type', 'withdrawal');
-      const up = await api.post('/upload', fd);
-      const attachment = up.data.path || up.data.filename || null;
+      const up = await uploadFile(wdFile, 'withdrawal');
+      const attachment = up.path || up.filename || null;
       // `from=<status>` records the stage the complaint must return to if the
       // Board of Discipline / Committee declines the withdrawal.
       await api.post(`/complaints/${id}/status`, {
@@ -1888,11 +1868,8 @@ export default function ComplaintDetail() {
     }
     setSoComBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', soComFile);
-      fd.append('type', 'soaction');
-      const up = await api.post('/upload', fd);
-      const attachment = up.data.path || up.data.filename || null;
+      const up = await uploadFile(soComFile, 'soaction');
+      const attachment = up.path || up.filename || null;
       const ddUserId = (c.statusHistory || []).find((h) => Number(h.StatusID) === 5)?.UserToID || null;
       await api.post(`/complaints/${id}/status`, {
         statusId: 123,

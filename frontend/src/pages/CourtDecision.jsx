@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { uploadFile } from '../api/upload';
 import { usePopups } from '../components/Popup';
 import './Reports.css';
 
@@ -58,10 +59,7 @@ export default function CourtDecision() {
     if (!f.name.toLowerCase().endsWith('.pdf')) { popup.warning('Please upload pdf file'); return; }
     if (f.size > 2 * 1024 * 1024) { popup.warning('File size should not be greater than 2mb'); return; }
     try {
-      const fd = new FormData();
-      fd.append('file', f);
-      fd.append('type', 'decision');
-      const { data } = await api.post('/upload', fd);
+      const data = await uploadFile(f, 'decision');
       setForm({ ...form, attachment: data.relativePath || data.path });
     } catch (_) {
       popup.error('Upload failed');

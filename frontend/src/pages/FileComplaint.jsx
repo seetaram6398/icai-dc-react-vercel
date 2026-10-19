@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
+import { uploadFile } from '../api/upload';
 import { useAuth } from '../context/AuthContext';
 import { usePopups } from '../components/Popup';
 import './Reports.css';
@@ -116,10 +117,7 @@ function FileUploadInput({ label, hint, accept, sizeMB = 15, onUpload, current, 
     if (preview) setObjUrl(URL.createObjectURL(f));
     setBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', f);
-      fd.append('type', type);
-      const { data } = await api.post('/upload', fd);
+      const data = await uploadFile(f, type);
       onUpload(data.relativePath || data.path, f.name);
     } catch (ex) {
       popup.error('Upload failed');
@@ -689,10 +687,7 @@ export default function FileComplaint() {
     }
     if (f.size > 15 * 1024 * 1024) { popup.warning('File size should not be greater than 15mb'); return; }
     try {
-      const fd = new FormData();
-      fd.append('file', f);
-      fd.append('type', 'audiovideo');
-      const { data } = await api.post('/upload', fd);
+      const data = await uploadFile(f, 'audiovideo');
       setAudioFiles([...audioFiles, { attachment: data.relativePath || data.path, fileName: f.name }]);
     } catch (_) { popup.error('Upload failed'); }
   };

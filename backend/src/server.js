@@ -5,7 +5,11 @@ const cookieParser = require('cookie-parser');
 
 const db = require('./config/db');
 const { verifyToken } = require('./services/auth');
-const { resolveDocumentPath } = require('./services/documents');
+const { resolveDocumentPath, normalizeStoredPath } = require('./services/documents');
+
+// On Vercel, uploaded files live in Vercel Blob; the local Documents folder is
+// only used when the server runs standalone (dev / VM).
+const blob = process.env.BLOB_READ_WRITE_TOKEN ? require('@vercel/blob') : null;
 
 const app = express();
 
@@ -47,11 +51,24 @@ function documentAuth(req, res, next) {
   if (cookie && verifyToken(cookie)) return next();
   return res.status(401).json({ error: 'Not authenticated' });
 }
-app.use('/documents', documentAuth, (req, res, next) => {
+app.use('/documents', documentAuth, async (req, res) => {
+  const rel = normalizeStoredPath(req.path);
   const resolved = resolveDocumentPath(req.path.replace(/^\/+/, ''));
-  if (!resolved) return res.status(404).json({ error: 'Document not found' });
-  res.setHeader('Cache-Control', 'no-store');
-  res.sendFile(resolved.abs);
+  if (resolved) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.sendFile(resolved.abs);
+  }
+  // Vercel deployment: the file lives in Vercel Blob, keyed by the same
+  // "<Folder>/<filename>" reference stored in the database.
+  if (blob && rel) {
+    try {
+      const head = await blob.head(rel);
+      return res.redirect(head.url);
+    } catch (e) {
+      // not found in Blob — fall through to 404
+    }
+  }
+  res.status(404).json({ error: 'Document not found' });
 });
 
 // ================= Frontend SPA (server-side protected) =================
