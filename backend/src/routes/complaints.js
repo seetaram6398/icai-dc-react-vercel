@@ -209,7 +209,7 @@ router.get('/', async (req, res) => {
     res.json(rows);
   } catch (e) {
     console.error('list complaints error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -289,7 +289,7 @@ router.get('/export', async (req, res) => {
     res.send('\uFEFF' + lines.join('\r\n'));
   } catch (e) {
     console.error('export complaints error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -566,7 +566,7 @@ router.get('/:id/form/pdf', async (req, res) => {
     res.send(Buffer.from(out.data));
   } catch (e) {
     console.error('complaint pdf error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -584,7 +584,7 @@ router.get('/:id/compilation/pdf', async (req, res) => {
     res.send(Buffer.from(out.data));
   } catch (e) {
     console.error('complaint compilation pdf error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -642,7 +642,7 @@ router.get('/:id/scrutiny/prefill', async (req, res) => {
     res.json(sheet);
   } catch (e) {
     console.error('scrutiny prefill error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -660,7 +660,7 @@ router.get('/:id/scrutiny/pdf', async (req, res) => {
     res.send(Buffer.from(out.data));
   } catch (e) {
     console.error('scrutiny pdf error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -677,7 +677,7 @@ router.get('/:id/form', async (req, res) => {
     res.send(html);
   } catch (e) {
     console.error('download form error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -694,7 +694,7 @@ router.get('/:id/compilation', async (req, res) => {
     res.send(html);
   } catch (e) {
     console.error('download compilation error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -746,7 +746,7 @@ router.get('/search', async (req, res) => {
     res.json(rows);
   } catch (e) {
     console.error('search complaints error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -826,7 +826,7 @@ router.get('/:id', async (req, res) => {
     });
   } catch (e) {
     console.error('get complaint error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -868,7 +868,7 @@ router.get('/:id/similar-candidates', async (req, res) => {
     res.json(rows);
   } catch (e) {
     console.error('similar candidates error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -959,7 +959,7 @@ router.put('/:id/similar', async (req, res) => {
     res.json({ message: 'Similar complaints updated', syncedTo: primary || null });
   } catch (e) {
     console.error('update similar error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1058,7 +1058,7 @@ router.post('/:id/answerable', async (req, res) => {
     res.json(created[0] || { AMemID: amemId });
   } catch (e) {
     console.error('add answerable error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1075,7 +1075,7 @@ router.delete('/:id/answerable/:amemId', async (req, res) => {
     res.json({ message: 'Answerable member removed' });
   } catch (e) {
     console.error('delete answerable error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1102,7 +1102,7 @@ router.put('/:id/answerable/:amemId/senior', async (req, res) => {
     res.json({ message: senior ? 'Marked as signatory' : 'Signatory removed' });
   } catch (e) {
     console.error('set senior error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1207,7 +1207,7 @@ router.post('/:id/respondent-response', async (req, res) => {
     });
   } catch (e) {
     console.error('respondent response error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1276,7 +1276,7 @@ router.post('/:id/complainant-rejoinder', async (req, res) => {
     res.json({ message: 'Rejoinder submitted. The case has been routed to the Scrutiny Officer for the next stage.' });
   } catch (e) {
     console.error('complainant rejoinder error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1354,7 +1354,7 @@ router.post('/:id/additional-document', async (req, res) => {
     res.json({ message: 'Additional document submitted. The case has been routed to the Scrutiny Officer.' });
   } catch (e) {
     console.error('additional-document error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1620,7 +1620,7 @@ router.put('/:id', async (req, res) => {
     res.json({ message: 'Complaint updated and resubmitted successfully', StatusID: 4 });
   } catch (e) {
     console.error('update complaint error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1672,7 +1672,7 @@ router.put('/:id/scrutiny', async (req, res) => {
     res.json({ message: 'Scrutiny details saved' });
   } catch (e) {
     console.error('save scrutiny error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1763,7 +1763,7 @@ router.post('/:id/status', async (req, res) => {
     res.json({ message: 'Status updated' });
   } catch (e) {
     console.error('update status error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -2074,7 +2074,7 @@ router.post('/', async (req, res) => {
     res.status(201).json({ CompID: compId, CompNo: compNo });
   } catch (e) {
     console.error('create complaint error:', e);
-    res.status(500).json({ error: 'Server error', detail: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

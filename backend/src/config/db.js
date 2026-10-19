@@ -74,6 +74,33 @@ function toPositional(sqlText, params) {
   return { sql, params: ordered };
 }
 
+/**
+ * Validate @name placeholders before running a query. With the positional
+ * (msnodesqlv8) driver a mismatch silently "works" locally, but the named
+ * (mssql/tedious) driver used on Vercel mis-binds or fails. Catch both cases
+ * early with a clear message instead of a confusing "Must declare the scalar
+ * variable" error in production.
+ *   - the same parameter spelled with different casing (@misconDate/@miscondate)
+ *   - a @name referenced in the SQL but missing from `params`
+ */
+function validateParams(sqlText, params) {
+  const text = String(sqlText).replace(/'[^']*'/g, "''");
+  const provided = new Set(Object.keys(params || {}).map((k) => k.toLowerCase()));
+  const seen = new Map();
+  for (const match of text.matchAll(/@([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    const name = match[1];
+    const key = name.toLowerCase();
+    const prev = seen.get(key);
+    if (prev && prev !== name) {
+      throw new Error(`SQL parameter case collision: @${prev} vs @${name}`);
+    }
+    seen.set(key, name);
+    if (!provided.has(key)) {
+      throw new Error(`SQL references @${name} but it was not provided`);
+    }
+  }
+}
+
 // --------------------------- msnodesqlv8 implementation ---------------------
 // The module name is held in a variable so Vercel's file tracer does not try to
 // bundle this Windows-only native module into the Linux serverless function.
@@ -127,6 +154,7 @@ async function mssqlQuery(sqlText, params) {
 
 // ---------------------------------- public API ------------------------------
 async function query(sqlText, params = {}) {
+  validateParams(sqlText, params);
   if (driver === 'mssql') return mssqlQuery(sqlText, params);
   const { sql: prepared, params: arr } = toPositional(sqlText, params);
   return odbcQuery(prepared, arr);
@@ -143,6 +171,7 @@ async function executeScalar(sqlText, params = {}) {
 }
 
 async function executeNonQuery(sqlText, params = {}) {
+  validateParams(sqlText, params);
   if (driver === 'mssql') {
     await mssqlQuery(sqlText, params);
     return Object.keys(params).length;
