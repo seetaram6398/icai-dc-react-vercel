@@ -3,6 +3,25 @@ import api from '../api/client';
 
 const AuthContext = createContext(null);
 
+function jwtExpMs(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isTokenExpired(token) {
+  const exp = jwtExpMs(token);
+  return exp !== null && exp <= Date.now();
+}
+
+function clearStoredSession() {
+  localStorage.removeItem('icai_token');
+  localStorage.removeItem('icai_user');
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
@@ -11,7 +30,14 @@ export function AuthProvider({ children }) {
       return null;
     }
   });
-  const [token, setToken] = useState(() => localStorage.getItem('icai_token'));
+  const [token, setToken] = useState(() => {
+    const t = localStorage.getItem('icai_token');
+    if (t && isTokenExpired(t)) {
+      clearStoredSession();
+      return null;
+    }
+    return t;
+  });
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
@@ -22,16 +48,68 @@ export function AuthProvider({ children }) {
     api
       .get('/auth/me')
       .then(({ data }) => {
+        if (!data.user) throw new Error('Session response missing user');
         setUser(data.user);
         localStorage.setItem('icai_user', JSON.stringify(data.user));
       })
       .catch(() => {
-        localStorage.removeItem('icai_token');
-        localStorage.removeItem('icai_user');
+        clearStoredSession();
         setToken(null);
         setUser(null);
       })
       .finally(() => setInitialized(true));
+  }, []);
+
+  // Expire the session the moment the JWT's `exp` passes, without waiting for
+  // the next API call to bounce with a 401.
+  useEffect(() => {
+    if (!token) return;
+    const exp = jwtExpMs(token);
+    if (exp === null) return;
+    const ms = exp - Date.now();
+    const expire = () => {
+      clearStoredSession();
+      setToken(null);
+      setUser(null);
+    };
+    if (ms <= 0) {
+      expire();
+      return;
+    }
+    const id = setTimeout(expire, ms);
+    return () => clearTimeout(id);
+  }, [token]);
+
+  // Cross-tab logout: when another tab removes or changes the token, this tab
+  // must drop its session state too.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== 'icai_token') return;
+      const t = e.newValue;
+      if (!t || isTokenExpired(t)) {
+        localStorage.removeItem('icai_user');
+        setToken(null);
+        setUser(null);
+      } else {
+        setToken(t);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Back/forward cache: a page restored from bfcache after logout must not
+  // keep rendering the authenticated UI.
+  useEffect(() => {
+    const onPageShow = (e) => {
+      if (!e.persisted) return;
+      const t = localStorage.getItem('icai_token');
+      if (!t || isTokenExpired(t)) {
+        window.location.replace('/login');
+      }
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
   }, []);
 
   const loginWithOTP = async (email, otp) => {

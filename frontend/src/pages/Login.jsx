@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { usePopups } from '../components/Popup';
 import './Login.css';
@@ -14,9 +14,21 @@ function genCaptchaString() {
   return s;
 }
 
+function defaultLanding(u) {
+  if (u?.UserType === 6) return '/bod-dashboard';
+  if (Number(u?.UserType) === 13) return '/complaints?statusIds=124';
+  if ([1, 4, 5, 7, 10, 11].includes(Number(u?.UserType))) return '/complaints';
+  return '/dashboard';
+}
+
+function isAuthPath(p) {
+  return !p || p === '/login' || p.startsWith('/register');
+}
+
 export default function Login() {
-  const { requestOTP, loginWithOTP } = useAuth();
+  const { token, user, requestOTP, loginWithOTP } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const canvasRef = useRef(null);
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
@@ -37,6 +49,15 @@ export default function Login() {
   useEffect(() => {
     refreshCaptcha();
   }, []);
+
+  // Already signed in? Login/Register are for logged-out users only.
+  // Guard on pathname so this never overrides handleVerify's own navigation
+  // (with its return-to target) after a successful login.
+  useEffect(() => {
+    if (token && user && location.pathname === '/login') {
+      navigate(defaultLanding(user), { replace: true });
+    }
+  }, [token, user, location.pathname]);
 
   useEffect(() => {
     const c = canvasRef.current;
@@ -133,10 +154,18 @@ export default function Login() {
     setBusy(true);
     try {
       const user = await loginWithOTP(email, otp);
-      if (user?.UserType === 6) navigate('/bod-dashboard');
-      else if (Number(user?.UserType) === 13) navigate('/complaints?statusIds=124');
-      else if ([1, 4, 5, 7, 10, 11].includes(Number(user?.UserType))) navigate('/complaints');
-      else navigate('/dashboard');
+      // Send the user back to the page they originally requested, then to the
+      // 401-interceptor stash, and only then fall back to the role default.
+      const from = location.state?.from;
+      const stored = sessionStorage.getItem('icai_return_to');
+      sessionStorage.removeItem('icai_return_to');
+      if (from?.pathname && !isAuthPath(from.pathname)) {
+        navigate(from.pathname + (from.search || ''), { replace: true });
+      } else if (!isAuthPath(stored)) {
+        navigate(stored, { replace: true });
+      } else {
+        navigate(defaultLanding(user), { replace: true });
+      }
     } catch (ex) {
       popup.error(ex.response?.data?.error || 'Login Failed...');
     } finally {

@@ -18,8 +18,9 @@ api.interceptors.response.use(
     if (err.response && err.response.status === 401) {
       localStorage.removeItem('icai_token');
       localStorage.removeItem('icai_user');
-      // let the auth context handle redirect via window.location
+      // Stash where the user was so Login can send them back after re-auth.
       if (!window.location.pathname.startsWith('/login')) {
+        sessionStorage.setItem('icai_return_to', window.location.pathname + window.location.search);
         window.location.href = '/login';
       }
     }

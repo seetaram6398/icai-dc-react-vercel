@@ -57,9 +57,14 @@ const CaptchaBlock = ({ canvasRef, captcha, setCaptcha, refreshCaptcha }) => (
 );
 
 export default function Register() {
-  const { register, verifyRegistration } = useAuth();
+  const { token, user, register, verifyRegistration } = useAuth();
   const navigate = useNavigate();
   const canvasRef = useRef(null);
+
+  // Registration is for logged-out users only.
+  useEffect(() => {
+    if (token && user) navigate('/dashboard', { replace: true });
+  }, [token, user]);
 
   const [tab, setTab] = useState('member');
   const [step, setStep] = useState(1);

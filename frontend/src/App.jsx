@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuth } from './context/AuthContext';
 import Layout from './layouts/Layout';
@@ -26,7 +26,8 @@ import CourtDecision from './pages/CourtDecision';
 import StayOnCase from './pages/StayOnCase';
 
 function Protected({ children }) {
-  const { token, initialized } = useAuth();
+  const { token, user, initialized } = useAuth();
+  const location = useLocation();
   if (!initialized) {
     return (
       <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '100vh' }}>
@@ -37,7 +38,9 @@ function Protected({ children }) {
       </div>
     );
   }
-  if (!token) return <Navigate to="/login" replace />;
+  if (!token || !user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
   return children;
 }
 
@@ -76,8 +79,10 @@ function App() {
         <Route path="master-data" element={<MasterDataPage />} />
         <Route path="decision" element={<CourtDecision />} />
         <Route path="stay-on-cases" element={<StayOnCase />} />
+        {/* Catch-all stays INSIDE the protected tree so unknown URLs can never
+            bypass the auth guard. */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </ErrorBoundary>
   );
