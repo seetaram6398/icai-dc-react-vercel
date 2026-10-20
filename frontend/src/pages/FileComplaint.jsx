@@ -766,7 +766,7 @@ export default function FileComplaint() {
     if (!isValidPincode(form.pincode)) return 'Please enter valid 6-digit Pincode';
     const pan = String(form.aadharNo || '').trim().toUpperCase();
     if (!pan) return 'Please enter PAN No';
-    if (!isValidPan(pan)) return 'Please enter a valid PAN No (format: ABCDE1234F)';
+    if (!isValidPan(pan)) return 'Please enter a valid PAN No (e.g., AAAPA1234A — 4th letter P for individuals)';
     if (!form.aadharPhoto) return 'Please upload Complainant PAN No. Photo';
     if (!form.complaintantPhoto) return 'Please upload Complainant Photo';
     if (!form.complaintantSignature) return 'Please upload Complainant Signature';
@@ -1006,7 +1006,7 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-4">
               <label className="form-label">PAN No. *</label>
-              <input className="form-control" maxLength={10} value={form.aadharNo} onChange={set('aadharNo')} placeholder="ABCDE1234F" title="PAN format: 5 letters, 4 digits, 1 letter (e.g., ABCDE1234F)" />
+              <input className="form-control" maxLength={10} value={form.aadharNo} onChange={set('aadharNo')} placeholder="AAAPA1234A" title="PAN: 3 letters, holder-type letter (P=Individual, F=Firm, C=Company), name letter, 4 digits, 1 letter" />
             </div>
             <div className="col-md-4">
               <FileUploadInput label="Upload Complainant PAN No. Photo" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}

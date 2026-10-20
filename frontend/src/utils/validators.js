@@ -29,9 +29,16 @@ export function isValidLandline(v) {
   return /^\d{6,8}$/.test(String(v || '').trim());
 }
 
-// PAN: ABCDE1234F (5 letters, 4 digits, 1 letter)
+// PAN as per Income Tax structure:
+//   chars 1-3  : alphabetic series (AAA-ZZZ)
+//   char  4    : holder status — P=Individual, F=Firm/LLP, C=Company, H=HUF,
+//                A=AOP, B=BOI, G=Government, L=Local authority,
+//                J=Artificial juridical person, T=Trust, K=legacy KYC
+//   char  5    : first letter of surname / name
+//   chars 6-9  : 4 digits
+//   char  10   : alphabetic series character
 export function isValidPan(v) {
-  return /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(String(v || '').trim().toUpperCase());
+  return /^[A-Z]{3}[PCHFATBLJGK][A-Z][0-9]{4}[A-Z]$/.test(String(v || '').trim().toUpperCase());
 }
 
 // Aadhaar: 12 digits
