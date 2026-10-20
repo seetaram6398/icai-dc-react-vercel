@@ -921,7 +921,10 @@ export default function FileComplaint() {
       <div className="d-flex align-items-center mb-3">
         <button className="btn btn-outline-secondary me-3 btn-sm" onClick={goBack}><i className="bi bi-arrow-left"></i></button>
         <div>
-          <h4 className="mb-0">{isEdit ? 'Edit Complaint' : 'Register New Complaint'}</h4>
+          <h4 className="mb-0">
+            {isEdit ? 'Edit Complaint' : 'Register New Complaint'}
+            <span className="fw-bold ms-2">(FORM {formType})</span>
+          </h4>
           {isEdit
             ? <small className="text-muted">Modify all complaint details using the complaint submission form. The updated complaint will be sent to the SO for re-scrutiny.</small>
             : (!isDD && <small className="text-muted">{formTitle}</small>)}
@@ -1069,8 +1072,8 @@ export default function FileComplaint() {
               </div>
               <div className="col-md-2">
                 <label className="form-label">CAPTCHA Image</label>
-                <div className="d-flex align-items-center gap-2">
-                  {captcha && <img src={captcha.image} alt="CAPTCHA" height={40} style={{ cursor: 'pointer' }} onClick={loadCaptcha} title="Click to refresh" />}
+                <div className="d-flex align-items-center" style={{ minHeight: 38 }}>
+                  {captcha && <img src={captcha.image} alt="CAPTCHA" height={36} style={{ cursor: 'pointer' }} onClick={loadCaptcha} title="Click to refresh" />}
                   {!captcha && <button className="btn btn-outline-secondary btn-sm" onClick={loadCaptcha} type="button">Load CAPTCHA</button>}
                 </div>
               </div>
@@ -1078,13 +1081,15 @@ export default function FileComplaint() {
                 <label className="form-label">Enter CAPTCHA</label>
                 <input className="form-control" value={captchaAnswer} onChange={(e) => setCaptchaAnswer(e.target.value)} />
               </div>
-              <div className="col-md-2 d-flex align-items-end">
-                <button className="btn btn-link btn-sm p-0 text-primary" onClick={loadCaptcha} type="button">
+              <div className="col-md-2">
+                <label className="form-label">&nbsp;</label>
+                <button className="btn btn-outline-secondary w-100" style={{ height: 38 }} onClick={loadCaptcha} type="button" title="Refresh CAPTCHA">
                   <i className="bi bi-arrow-clockwise me-1"></i>Refresh CAPTCHA
                 </button>
               </div>
-              <div className="col-md-3 d-flex align-items-end">
-                <button className="btn btn-primary btn-sm" onClick={onGetMemberDetails} type="button">
+              <div className="col-md-3">
+                <label className="form-label">&nbsp;</label>
+                <button className="btn btn-primary w-100" style={{ height: 38 }} onClick={onGetMemberDetails} type="button">
                   <i className="bi bi-search me-1"></i>Get Member Details
                 </button>
               </div>
@@ -1202,18 +1207,26 @@ export default function FileComplaint() {
                 </div>
                 <div className="col-md-2">
                   <label className="form-label">CAPTCHA Image</label>
-                  <div>{memAnsCaptcha && <img src={memAnsCaptcha.image} alt="CAPTCHA" height={40} style={{ cursor: 'pointer' }} onClick={loadMemberAnsCaptcha} title="Click to refresh" />}</div>
-                  {!memAnsCaptcha && <button className="btn btn-outline-secondary btn-sm" onClick={loadMemberAnsCaptcha} type="button">Load CAPTCHA</button>}
+                  <div className="d-flex align-items-center" style={{ minHeight: 38 }}>
+                    {memAnsCaptcha && <img src={memAnsCaptcha.image} alt="CAPTCHA" height={36} style={{ cursor: 'pointer' }} onClick={loadMemberAnsCaptcha} title="Click to refresh" />}
+                    {!memAnsCaptcha && <button className="btn btn-outline-secondary btn-sm" onClick={loadMemberAnsCaptcha} type="button">Load CAPTCHA</button>}
+                  </div>
                 </div>
                 <div className="col-md-2">
                   <label className="form-label">Enter CAPTCHA</label>
                   <input className="form-control" value={memAnsCaptchaAnswer} onChange={(e) => setMemAnsCaptchaAnswer(e.target.value)} />
                 </div>
-                <div className="col-md-1 d-flex align-items-end">
-                  <button className="btn btn-link btn-sm p-0 text-primary" onClick={loadMemberAnsCaptcha} type="button"><i className="bi bi-arrow-clockwise"></i></button>
+                <div className="col-md-1">
+                  <label className="form-label">&nbsp;</label>
+                  <button className="btn btn-outline-secondary w-100 px-2" style={{ height: 38 }} onClick={loadMemberAnsCaptcha} type="button" title="Refresh CAPTCHA">
+                    <i className="bi bi-arrow-clockwise"></i>
+                  </button>
                 </div>
-                <div className="col-md-2 d-flex align-items-end">
-                  <button className="btn btn-primary btn-sm" onClick={onGetMemberAnsDetails} type="button"><i className="bi bi-search me-1"></i>Get Details</button>
+                <div className="col-md-2">
+                  <label className="form-label">&nbsp;</label>
+                  <button className="btn btn-primary w-100" style={{ height: 38 }} onClick={onGetMemberAnsDetails} type="button">
+                    <i className="bi bi-search me-1"></i>Get Details
+                  </button>
                 </div>
               </div>
               <div className="row g-3 mb-3">
