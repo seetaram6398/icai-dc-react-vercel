@@ -923,7 +923,7 @@ export default function FileComplaint() {
         <div>
           <h4 className="mb-0">
             {isEdit ? 'Edit Complaint' : 'Register New Complaint'}
-            <span className="fw-bold ms-2">(FORM {formType})</span>
+            <span className="fw-bold ms-2" style={{ fontSize: '0.7rem' }}>(FORM {formType})</span>
           </h4>
           {isEdit
             ? <small className="text-muted">Modify all complaint details using the complaint submission form. The updated complaint will be sent to the SO for re-scrutiny.</small>
