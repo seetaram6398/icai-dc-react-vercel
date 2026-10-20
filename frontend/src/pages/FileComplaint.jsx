@@ -4,6 +4,12 @@ import api from '../api/client';
 import { uploadFile } from '../api/upload';
 import { useAuth } from '../context/AuthContext';
 import { usePopups } from '../components/Popup';
+import {
+  isValidEmail, sanitizeDigits, isValidMobile, isValidPincode, isValidStdCode,
+  isValidLandline, isValidPan, isValidAadhaar, isValidGstin,
+  sanitizeAlphaNumUpper, sanitizeUpper, isValidName, isValidFirmName,
+  isFutureDate, isDateRangeOk,
+} from '../utils/validators';
 import './Reports.css';
 
 const CCODES = ['91', '1', '44', '61', '971', '966', '65', '977', '880', '94', '92'];
@@ -223,7 +229,19 @@ export default function FileComplaint() {
   const [busy, setBusy] = useState(false);
   const popup = usePopups();
 
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const set = (k) => (e) => {
+    let v = e.target.value;
+    // Input-level sanitization so invalid characters never even reach state.
+    if (k === 'mobile' || k === 'resMobile') v = sanitizeDigits(v, 15);
+    else if (k === 'pincode') v = sanitizeDigits(v, 6);
+    else if (k === 'stdCode' || k === 'resStdCode') v = sanitizeDigits(v, 4);
+    else if (k === 'landlineNo' || k === 'resLandlineNo') v = sanitizeDigits(v, 8);
+    else if (k === 'aadharNo') v = sanitizeAlphaNumUpper(v, 12);
+    else if (k === 'gstinNo') v = sanitizeUpper(v, 15);
+    else if (k === 'transRefNo' || k === 'instrumentNo') v = sanitizeUpper(v, 30);
+    else if (k === 'taxableAmount') v = v.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
+    setForm({ ...form, [k]: v });
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -633,15 +651,27 @@ export default function FileComplaint() {
 
   const onPersonAdd = () => {
     if (!personName || !personMobile || !personEmail) { popup.warning('Please fill all person fields'); return; }
-    if (personMobile.length !== 10 || !/^\d+$/.test(personMobile)) { popup.warning('Please enter valid 10-digit mobile number'); return; }
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(personEmail)) { popup.warning('Please enter valid email ID'); return; }
-    setPersons([...persons, { personName, personMobile, personEmail }]);
+    if (!isValidName(personName)) { popup.warning('Please enter a valid Name of Person (letters only)'); return; }
+    if (!isValidMobile(personMobile, '91')) { popup.warning('Please enter valid 10-digit mobile number (starting 6-9)'); return; }
+    if (!isValidEmail(personEmail)) { popup.warning('Please enter valid email ID'); return; }
+    setPersons([...persons, { personName: personName.trim(), personMobile, personEmail: personEmail.trim() }]);
     setPersonName(''); setPersonMobile(''); setPersonEmail('');
   };
 
   const onScheduleAdd = () => {
     const { schedule, partNo, itemNo, misconductDate, misconductDateFrom, misconductDateTo } = scheduleItem;
     if (!schedule || !partNo || !itemNo) { popup.warning('Please select Schedule Number, Part Number and Item Number'); return; }
+    if (!misconductDateFrom) { popup.warning('Please select Misconduct Period Date From'); return; }
+    if (!misconductDateTo) { popup.warning('Please select Misconduct Period Date To'); return; }
+    if (!isDateRangeOk(misconductDateFrom, misconductDateTo)) {
+      popup.warning('Misconduct Period Date To must be on or after Date From');
+      return;
+    }
+    if (misconductDate && misconductDateFrom && misconductDateTo
+      && !(new Date(misconductDateFrom) <= new Date(misconductDate) && new Date(misconductDate) <= new Date(misconductDateTo))) {
+      popup.warning('Misconduct Date must lie within the Misconduct Period (From - To)');
+      return;
+    }
     const schName = schedules.find((s) => String(s.value) === schedule)?.label || schedule;
     const partLabel = parts.find((p) => String(p.value) === partNo)?.label || partNo;
     const itemLabel = items.find((i) => String(i.value) === itemNo)?.label || itemNo;
@@ -663,7 +693,16 @@ export default function FileComplaint() {
 
   const onAnswerableAdd = async () => {
     if (!memRegNo) { popup.warning('Please enter Member Registration No'); return; }
+    if (!/^[A-Za-z0-9-]{5,20}$/.test(String(memRegNo).trim())) { popup.warning('Please enter a valid Membership No (5-20 letters/digits)'); return; }
     if (!memAnsCaptchaAnswer) { popup.warning('Please complete CAPTCHA verification'); return; }
+    if (memMobile && !isValidMobile(memMobile, memCountryCode)) {
+      popup.warning(String(memCountryCode) === '91'
+        ? 'Please enter valid 10-digit mobile number (starting 6-9)'
+        : 'Please enter a valid mobile number');
+      return;
+    }
+    if (memEmail && !isValidEmail(memEmail)) { popup.warning('Please enter valid email ID'); return; }
+    if (memName && !isValidName(memName)) { popup.warning('Please enter a valid Name (letters only)'); return; }
     if (form.resRegistrationNo === memRegNo) { popup.warning('Respondent and Answerable member cannot be same'); return; }
     if (answerableMembers.find((m) => m.memRegistrationNo === memRegNo)) { popup.warning('Already added Answerable member'); return; }
     setAnswerableMembers([...answerableMembers, {
@@ -699,32 +738,66 @@ export default function FileComplaint() {
       if (!form.regulatorName) return 'Please enter Regulator Name';
     }
     if (!form.name) return 'Please enter Name';
+    if (!isValidName(form.name)) return 'Please enter a valid Name (letters, spaces, dots, hyphens only)';
     if (!form.email) return 'Please enter Email ID';
+    if (!isValidEmail(form.email)) return 'Please enter a valid Email ID';
     if (!form.countryCode) return 'Please enter Country Code';
     if (!form.mobile) return 'Please enter Mobile No';
-    if (form.stdCode && !/^\d+$/.test(form.stdCode)) return 'Please enter a valid STD Code';
-    if (form.landlineNo && !/^\d+$/.test(form.landlineNo)) return 'Please enter a valid Landline No';
+    if (!isValidMobile(form.mobile, form.countryCode)) {
+      return String(form.countryCode) === '91'
+        ? 'Please enter a valid 10-digit Mobile No (starting 6-9)'
+        : 'Please enter a valid Mobile No';
+    }
+    if (form.stdCode && !isValidStdCode(form.stdCode)) return 'Please enter a valid STD Code (2-4 digits)';
+    if (form.landlineNo && !isValidLandline(form.landlineNo)) return 'Please enter a valid Landline No (6-8 digits)';
     if (!form.address) return 'Please enter Flat, House no., Building, Company, Apartment';
     if (!form.area) return 'Please enter Area, Street, Sector, Village';
     if (!form.stateId) return 'Please select State';
     if (!form.cityId) return 'Please select City';
-    const pin = String(form.pincode ?? '').trim();
-    if (!/^\d{6}$/.test(pin)) return 'Please enter valid 6-digit Pincode';
-    if (!form.aadharNo || (form.aadharNo.length !== 12 && form.aadharNo.length !== 10)) return 'Please enter PAN No';
+    if (!isValidPincode(form.pincode)) return 'Please enter valid 6-digit Pincode';
+    const pan = String(form.aadharNo || '').trim();
+    if (!pan) return 'Please enter PAN No';
+    if (pan.length === 12) {
+      if (!isValidAadhaar(pan)) return 'Please enter a valid 12-digit Aadhaar No';
+    } else if (!isValidPan(pan)) {
+      return 'Please enter a valid PAN No (e.g., ABCDE1234F)';
+    }
     if (!form.aadharPhoto) return 'Please upload Complainant PAN No. Photo';
     if (!form.complaintantPhoto) return 'Please upload Complainant Photo';
     if (!form.complaintantSignature) return 'Please upload Complainant Signature';
 
     if (form.resType === 'member') {
       if (!form.resName) return 'Please enter Respondent Name';
+      if (!isValidName(form.resName)) return 'Please enter a valid Respondent Name (letters only)';
       if (!form.resRegistrationNo) return 'Please enter Membership Number';
+      if (!/^[A-Za-z0-9-]{5,20}$/.test(String(form.resRegistrationNo).trim())) {
+        return 'Please enter a valid Membership Number (5-20 letters/digits)';
+      }
+      if (!form.resMobile) return 'Please enter Respondent Mobile No';
+      if (!isValidMobile(form.resMobile, form.resCountryCode)) {
+        return String(form.resCountryCode) === '91'
+          ? 'Please enter a valid 10-digit Respondent Mobile No (starting 6-9)'
+          : 'Please enter a valid Respondent Mobile No';
+      }
+      if (form.resEmail && !isValidEmail(form.resEmail)) return 'Please enter a valid Respondent Email ID';
+      if (form.resStdCode && !isValidStdCode(form.resStdCode)) return 'Please enter a valid STD Code (2-4 digits)';
+      if (form.resLandlineNo && !isValidLandline(form.resLandlineNo)) return 'Please enter a valid Landline No (6-8 digits)';
       if (!form.resProfessionalAddress) return 'Please enter Professional Address';
       if (!form.resCommunicationAddress) return 'Please enter Communication Address';
       if (!form.resStateId) return 'Please select Communication State';
       if (!form.resCityId) return 'Please select Communication City';
     } else {
       if (!form.nameOfFirm) return 'Please enter Name of Firm';
+      if (!isValidFirmName(form.nameOfFirm)) return 'Please enter a valid Name of Firm';
       if (!form.firmNo) return 'Please enter Firm No';
+      if (!/^[A-Za-z0-9-]{1,20}$/.test(String(form.firmNo).trim())) return 'Please enter a valid Firm No (letters/digits)';
+      if (!form.resMobile) return 'Please enter Respondent Mobile No';
+      if (!isValidMobile(form.resMobile, form.resCountryCode)) {
+        return String(form.resCountryCode) === '91'
+          ? 'Please enter a valid 10-digit Respondent Mobile No (starting 6-9)'
+          : 'Please enter a valid Respondent Mobile No';
+      }
+      if (form.resEmail && !isValidEmail(form.resEmail)) return 'Please enter a valid Respondent Email ID';
       if (!form.resProfessionalAddress) return 'Please enter Professional Address';
       if (!form.resCommunicationAddress) return 'Please enter Communication Address';
       if (!form.firmProfStateId) return 'Please select Professional State';
@@ -737,16 +810,23 @@ export default function FileComplaint() {
     if (!form.misconductAttachment) return 'Please upload Particular of Misconduct';
     if (scheduleList.length === 0) return 'Please add at least one allegation / misconduct';
     if (!form.entityMisconduct) return 'Please enter Entity in respect of which misconduct alleged';
+    if (String(form.entityMisconduct).trim().length < 2) return 'Please enter a valid Entity name';
 
     const isGovType = ['Central Goverment', 'State Goverment', 'Regulatory Agency'].includes(ctLabel);
     if (!isGovType) {
       if (!form.paymentMode) return 'Please select Mode of Payment';
       if (!form.paymentDate) return 'Please enter Payment Date';
+      if (isFutureDate(form.paymentDate)) return 'Payment Date cannot be in the future';
       if (!form.transRefNo) return 'Please enter Transaction Reference No';
+      if (String(form.transRefNo).trim().length < 3) return 'Please enter a valid Transaction Reference No';
       if (!form.instrumentNo) return 'Please enter Instrument Number';
+      if (String(form.instrumentNo).trim().length < 3) return 'Please enter a valid Instrument Number';
       if (!form.instrumentDate) return 'Please enter Instrument Date';
+      if (isFutureDate(form.instrumentDate)) return 'Instrument Date cannot be in the future';
       if (!form.taxableAmount) return 'Please enter Taxable Amount';
+      if (!(parseFloat(form.taxableAmount) > 0)) return 'Please enter a valid Taxable Amount';
       if (!form.taxRate) return 'Please enter Tax Rate';
+      if (form.gstinNo && !isValidGstin(form.gstinNo)) return 'Please enter a valid GSTIN (15 characters, e.g., 22AAAAA0000A1Z5)';
       if (!form.paymentDetails) return 'Please enter Payment Details Like DD';
     }
     if (docs.length === 0) return 'Please provide at least one document/evidence';
@@ -763,8 +843,21 @@ export default function FileComplaint() {
     if (vErr) { popup.error(vErr); return; }
     setBusy(true);
     try {
+      const T = (v) => String(v ?? '').trim();
       const payload = {
         ...form,
+        name: T(form.name), email: T(form.email),
+        address: T(form.address), area: T(form.area), landmark: T(form.landmark),
+        pincode: T(form.pincode), aadharNo: T(form.aadharNo).toUpperCase(),
+        nameOfFirm: T(form.nameOfFirm), firmNo: T(form.firmNo).toUpperCase(),
+        resName: T(form.resName), resRegistrationNo: T(form.resRegistrationNo).toUpperCase(),
+        resMobile: T(form.resMobile), resEmail: T(form.resEmail),
+        resProfessionalAddress: T(form.resProfessionalAddress),
+        resCommunicationAddress: T(form.resCommunicationAddress),
+        transRefNo: T(form.transRefNo), instrumentNo: T(form.instrumentNo),
+        gstinNo: T(form.gstinNo), paymentDetails: T(form.paymentDetails),
+        entityMisconduct: T(form.entityMisconduct),
+        regulatorName: T(form.regulatorName), regulatorDesignation: T(form.regulatorDesignation),
         resStateName: form.resRStateName,
         resCityName: form.resRCityName,
         rStateName: form.resRStateName,
@@ -852,7 +945,7 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-4">
               <label className="form-label">Email ID *</label>
-              <input type="email" className="form-control" value={form.email} onChange={set('email')} readOnly={!isDD} />
+              <input type="email" className="form-control" maxLength={100} value={form.email} onChange={set('email')} readOnly={!isDD} />
             </div>
             <div className="col-md-2">
               <label className="form-label">Country Code *</label>
@@ -862,15 +955,15 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-3">
               <label className="form-label">Mobile No *</label>
-              <input className="form-control" value={form.mobile} onChange={set('mobile')} readOnly={!isDD} />
+              <input className="form-control" value={form.mobile} onChange={set('mobile')} readOnly={!isDD} inputMode="numeric" maxLength={String(form.countryCode) === '91' ? 10 : 15} />
             </div>
             <div className="col-md-2">
               <label className="form-label">STD Code</label>
-              <input className="form-control" value={form.stdCode} onChange={set('stdCode')} />
+              <input className="form-control" maxLength={8} value={form.stdCode} onChange={set('stdCode')} inputMode="numeric" />
             </div>
             <div className="col-md-3">
               <label className="form-label">Landline No</label>
-              <input className="form-control" value={form.landlineNo} onChange={set('landlineNo')} />
+              <input className="form-control" maxLength={8} value={form.landlineNo} onChange={set('landlineNo')} inputMode="numeric" />
             </div>
             <div className="col-md-2">
               <label className="form-label">Region *</label>
@@ -904,11 +997,11 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-2">
               <label className="form-label">Pincode *</label>
-              <input className="form-control" maxLength={6} value={form.pincode} onChange={set('pincode')} />
+              <input className="form-control" maxLength={6} value={form.pincode} onChange={set('pincode')} inputMode="numeric" />
             </div>
             <div className="col-md-4">
               <label className="form-label">PAN No. *</label>
-              <input className="form-control" value={form.aadharNo} onChange={set('aadharNo')} />
+              <input className="form-control" maxLength={12} value={form.aadharNo} onChange={set('aadharNo')} />
             </div>
             <div className="col-md-4">
               <FileUploadInput label="Upload Complainant PAN No. Photo" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
@@ -966,7 +1059,7 @@ export default function FileComplaint() {
             <div className="row g-3 mb-3">
               <div className="col-md-3">
                 <label className="form-label">Membership Number *</label>
-                <input className="form-control" value={memberRegNo} onChange={(e) => setMemberRegNo(e.target.value)} />
+                <input className="form-control" maxLength={20} value={memberRegNo} onChange={(e) => setMemberRegNo(sanitizeAlphaNumUpper(e.target.value, 20))} />
                 <small className="text-muted" style={{ fontSize: 11 }}>Please add prefix '0' (Zero) If membership no is less than 6 digit.</small>
               </div>
               <div className="col-md-2">
@@ -1006,19 +1099,19 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-3">
               <label className="form-label">Mobile No *</label>
-              <input className="form-control" value={form.resMobile} onChange={set('resMobile')} />
+              <input className="form-control" value={form.resMobile} onChange={set('resMobile')} inputMode="numeric" maxLength={String(form.resCountryCode) === '91' ? 10 : 15} />
             </div>
             <div className="col-md-1">
               <label className="form-label">STD Code</label>
-              <input className="form-control" value={form.resStdCode} onChange={set('resStdCode')} />
+              <input className="form-control" maxLength={4} value={form.resStdCode} onChange={set('resStdCode')} inputMode="numeric" />
             </div>
             <div className="col-md-2">
               <label className="form-label">Landline No</label>
-              <input className="form-control" value={form.resLandlineNo} onChange={set('resLandlineNo')} />
+              <input className="form-control" maxLength={8} value={form.resLandlineNo} onChange={set('resLandlineNo')} inputMode="numeric" />
             </div>
             <div className="col-md-4">
               <label className="form-label">Email ID</label>
-              <input type="email" className="form-control" value={form.resEmail} onChange={set('resEmail')} />
+              <input type="email" className="form-control" maxLength={100} value={form.resEmail} onChange={set('resEmail')} />
             </div>
             <div className="col-md-12">
               <div className="form-check">
@@ -1100,7 +1193,7 @@ export default function FileComplaint() {
               <div className="row g-3 mb-3">
                 <div className="col-md-2">
                   <label className="form-label">Membership No</label>
-                  <input className="form-control" value={memRegNo} onChange={(e) => setMemRegNo(e.target.value)} />
+                  <input className="form-control" maxLength={20} value={memRegNo} onChange={(e) => setMemRegNo(sanitizeAlphaNumUpper(e.target.value, 20))} />
                 </div>
                 <div className="col-md-2">
                   <label className="form-label">CAPTCHA Image</label>
@@ -1120,8 +1213,8 @@ export default function FileComplaint() {
               </div>
               <div className="row g-3 mb-3">
                 <div className="col-md-3"><label className="form-label">Name</label><input className="form-control" value={memName} onChange={(e) => setMemName(e.target.value)} /></div>
-                <div className="col-md-2"><label className="form-label">Mobile No</label><input className="form-control" value={memMobile} onChange={(e) => setMemMobile(e.target.value)} /></div>
-                <div className="col-md-3"><label className="form-label">Email ID</label><input className="form-control" value={memEmail} onChange={(e) => setMemEmail(e.target.value)} /></div>
+                <div className="col-md-2"><label className="form-label">Mobile No</label><input className="form-control" maxLength={String(memCountryCode) === '91' ? 10 : 15} inputMode="numeric" value={memMobile} onChange={(e) => setMemMobile(sanitizeDigits(e.target.value, 15))} /></div>
+                <div className="col-md-3"><label className="form-label">Email ID</label><input className="form-control" maxLength={100} value={memEmail} onChange={(e) => setMemEmail(e.target.value.trim())} /></div>
                 <div className="col-md-2">
                   <label className="form-label">Comm State</label>
                   <select className="form-select" value={memCommStateId} onChange={async (e) => {
@@ -1194,11 +1287,11 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-3">
               <label className="form-label">Mobile No.</label>
-              <input className="form-control" value={personMobile} onChange={(e) => setPersonMobile(e.target.value)} />
+              <input className="form-control" maxLength={10} inputMode="numeric" value={personMobile} onChange={(e) => setPersonMobile(sanitizeDigits(e.target.value, 15))} />
             </div>
             <div className="col-md-3">
               <label className="form-label">Email ID</label>
-              <input type="email" className="form-control" value={personEmail} onChange={(e) => setPersonEmail(e.target.value)} />
+              <input type="email" className="form-control" maxLength={100} value={personEmail} onChange={(e) => setPersonEmail(e.target.value.trim())} />
             </div>
             <div className="col-md-3 d-flex align-items-end">
               <button className="btn btn-success btn-sm" onClick={onPersonAdd} type="button"><i className="bi bi-plus-circle me-1"></i>Save</button>
@@ -1308,7 +1401,7 @@ export default function FileComplaint() {
               </div>
               <div className="col-md-3">
                 <label className="form-label">GST Number</label>
-                <input className="form-control" value={form.gstinNo} onChange={set('gstinNo')} />
+                <input className="form-control" maxLength={15} value={form.gstinNo} onChange={set('gstinNo')} />
               </div>
               <div className="col-md-3">
                 <label className="form-label">Instrument Number *</label>
