@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePopups } from '../components/Popup';
 import {
   isValidEmail, sanitizeDigits, isValidMobile, isValidPincode, isValidStdCode,
-  isValidLandline, isValidPan, isValidAadhaar, isValidGstin,
+  isValidLandline, isValidPan, isValidGstin,
   sanitizeAlphaNumUpper, sanitizeUpper, isValidName, isValidFirmName,
   isFutureDate, isDateRangeOk,
 } from '../utils/validators';
@@ -236,7 +236,7 @@ export default function FileComplaint() {
     else if (k === 'pincode') v = sanitizeDigits(v, 6);
     else if (k === 'stdCode' || k === 'resStdCode') v = sanitizeDigits(v, 4);
     else if (k === 'landlineNo' || k === 'resLandlineNo') v = sanitizeDigits(v, 8);
-    else if (k === 'aadharNo') v = sanitizeAlphaNumUpper(v, 12);
+    else if (k === 'aadharNo') v = sanitizeAlphaNumUpper(v, 10);
     else if (k === 'gstinNo') v = sanitizeUpper(v, 15);
     else if (k === 'transRefNo' || k === 'instrumentNo') v = sanitizeUpper(v, 30);
     else if (k === 'taxableAmount') v = v.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
@@ -560,6 +560,15 @@ export default function FileComplaint() {
     } catch (_) {}
   };
 
+  // CAPTCHA auto-mode: load it as soon as the relevant section is shown —
+  // no "Load CAPTCHA" click required. Reloads when the respondent type flips
+  // between Member (lookup captcha) and Firm (answerable-member captcha).
+  useEffect(() => {
+    if (form.resType === 'firm') loadMemberAnsCaptcha();
+    else loadCaptcha();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.resType]);
+
   const onGetMemberDetails = async () => {
     if (!memberRegNo) { popup.warning('Please enter Membership No'); return; }
     if (!captchaAnswer) { popup.warning('Please enter CAPTCHA'); return; }
@@ -755,13 +764,9 @@ export default function FileComplaint() {
     if (!form.stateId) return 'Please select State';
     if (!form.cityId) return 'Please select City';
     if (!isValidPincode(form.pincode)) return 'Please enter valid 6-digit Pincode';
-    const pan = String(form.aadharNo || '').trim();
+    const pan = String(form.aadharNo || '').trim().toUpperCase();
     if (!pan) return 'Please enter PAN No';
-    if (pan.length === 12) {
-      if (!isValidAadhaar(pan)) return 'Please enter a valid 12-digit Aadhaar No';
-    } else if (!isValidPan(pan)) {
-      return 'Please enter a valid PAN No (e.g., ABCDE1234F)';
-    }
+    if (!isValidPan(pan)) return 'Please enter a valid PAN No (format: ABCDE1234F)';
     if (!form.aadharPhoto) return 'Please upload Complainant PAN No. Photo';
     if (!form.complaintantPhoto) return 'Please upload Complainant Photo';
     if (!form.complaintantSignature) return 'Please upload Complainant Signature';
@@ -1001,7 +1006,7 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-4">
               <label className="form-label">PAN No. *</label>
-              <input className="form-control" maxLength={12} value={form.aadharNo} onChange={set('aadharNo')} />
+              <input className="form-control" maxLength={10} value={form.aadharNo} onChange={set('aadharNo')} placeholder="ABCDE1234F" title="PAN format: 5 letters, 4 digits, 1 letter (e.g., ABCDE1234F)" />
             </div>
             <div className="col-md-4">
               <FileUploadInput label="Upload Complainant PAN No. Photo" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
