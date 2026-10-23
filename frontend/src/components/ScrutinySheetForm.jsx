@@ -77,9 +77,27 @@ const EMPTY = () => {
 
 function Seg({ name, value, opts, onChange }) {
   return (
-    <div className="scseg">
-      <label><input type="radio" name={name} checked={value === opts.left} onChange={() => onChange(opts.left)} /><span>{opts.left}</span></label>
-      <label><input type="radio" name={name} checked={value === opts.right} onChange={() => onChange(opts.right)} /><span>{opts.right}</span></label>
+    <div className="scseg radio-card-list">
+      <label className="radio-card">
+        <input
+          className="form-check-input"
+          type="radio"
+          name={name}
+          checked={value === opts.left}
+          onChange={() => onChange(opts.left)}
+        />
+        <span className="radio-card-label">{opts.left}</span>
+      </label>
+      <label className="radio-card">
+        <input
+          className="form-check-input"
+          type="radio"
+          name={name}
+          checked={value === opts.right}
+          onChange={() => onChange(opts.right)}
+        />
+        <span className="radio-card-label">{opts.right}</span>
+      </label>
     </div>
   );
 }
@@ -188,12 +206,9 @@ function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, 
   return (
     <div>
       <style>{`
-        .sc-wrap .scseg{display:inline-flex;border:1px solid #a9c6e0;border-radius:6px;overflow:hidden;vertical-align:top}
-        .sc-wrap .scseg label{display:inline-flex;cursor:pointer}
-        .sc-wrap .scseg label+label{border-left:1px solid #a9c6e0}
-        .sc-wrap .scseg input{position:absolute;opacity:0;width:1px;height:1px}
-        .sc-wrap .scseg span{padding:4px 12px;font-size:13px;white-space:nowrap;color:#0b3a67;background:#fff}
-        .sc-wrap .scseg input:checked+span{background:#158a5e;color:#fff;font-weight:700}
+        .sc-wrap .scseg{display:inline-flex;flex-direction:row;gap:8px;vertical-align:top}
+        .sc-wrap .scseg .radio-card{padding:6px 14px}
+        .sc-wrap .scseg .radio-card-label{font-size:13px}
         .sc-wrap .scn{text-align:center;font-weight:800;color:#fff;background:#0b3a67;width:44px}
         .sc-wrap .sca{text-align:center;font-weight:700;color:#0b3a67;background:#e3f0fb;width:56px}
         .sc-wrap td{vertical-align:top}

@@ -23,6 +23,7 @@ const PAGE_LABELS = {
   '/bod-dashboard': 'BOD Dashboard',
   '/complaints': 'View Complaints',
   '/my-complaints': 'My Complaints',
+  '/withdrawal/update': 'Withdrawal of Complaint',
   '/file-complaint': 'File Complaint',
   '/agenda': 'Agenda',
   '/agenda/generate': 'Generate Agenda',
@@ -42,10 +43,10 @@ const PAGE_LABELS = {
 
 const DISPOSAL_STATUSES = {
   4: '5,10,17,24,25,31,49,55,66,68,69,70,84',
-  5: '2,4,8,13,14,15,16,20,23,26,28,29,30,32,33,34,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,68,69,70,78,123',
+  5: '2,4,8,13,14,15,16,20,23,26,28,29,30,32,33,34,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,68,69,70,78,123,131,132',
   6: '79,80,81,82,84,95,96,97,98,99,100,111,112,113,114,115,116,117,118',
-  7: '27,28,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,70',
-  10: '27,49,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65',
+  7: '27,28,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,70,131,132',
+  10: '27,49,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,131,132',
 };
 
 const FULL_UT = [1, 4];
@@ -225,7 +226,7 @@ export default function Layout() {
             </>
           )}
 
-          {ut === 3 && link('/file-complaint?type=A', fileComplaintLabel, 'plus-square')}
+          {ut === 3 && link('/file-complaint?type=I', fileComplaintLabel, 'plus-square')}
 
           {ut !== 4 && (
             <>
@@ -237,6 +238,7 @@ export default function Layout() {
                   <>
                     {subLink('/complaints', ut === 11 ? 'All Complaints' : 'All')}
                     {ut === 3 && subLink('/complaints?statusIds=3', 'Pending for Modification')}
+                    {ut === 3 && subLink('/withdrawal/update', 'Withdrawal of Complaint')}
                     {DISPOSAL_STATUSES[ut] && subLink(`/complaints?statusIds=${DISPOSAL_STATUSES[ut]}`, 'Disposal')}
                   </>
                 )}
@@ -284,7 +286,7 @@ export default function Layout() {
                         fileComplaintLabel,
                         'plus-square',
                         <>
-                          {fileFormSubLink('A', 'Form A')}
+                          {fileFormSubLink('I', 'Form I')}
                         </>
                       ))}
 

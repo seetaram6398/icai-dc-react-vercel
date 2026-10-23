@@ -80,3 +80,160 @@ body {
 }
 .rich-remark p { margin-bottom: 0.35rem; }
 .rich-remark p:last-child { margin-bottom: 0; }
+
+/* ---------- Radio option cards with a coloured border (btn-primary family) ---------- */
+.radio-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.radio-card {
+  /* follows the theme's primary (same colour as the Submit button) */
+  --rc-rgb: var(--bs-primary-rgb, 13, 110, 253);
+  --rc-rgb2: 37, 99, 235;
+  --rc-accent: #93c5fd;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 18px 11px 14px;
+  border: 2px solid rgba(var(--rc-rgb), 0.45);
+  border-radius: 14px;
+  background: transparent;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  cursor: pointer;
+}
+/* subtle border-colour variation between options (all in the same primary/blue family) */
+.radio-card:nth-child(6n + 1) {
+  --rc-rgb: var(--bs-primary-rgb, 13, 110, 253);
+  --rc-rgb2: 37, 99, 235;
+  --rc-accent: #93c5fd;
+}
+.radio-card:nth-child(6n + 2) {
+  --rc-rgb: 37, 99, 235;
+  --rc-rgb2: 59, 130, 246;
+  --rc-accent: #bfdbfe;
+}
+.radio-card:nth-child(6n + 3) {
+  --rc-rgb: 59, 130, 246;
+  --rc-rgb2: 14, 165, 233;
+  --rc-accent: #dbeafe;
+}
+.radio-card:nth-child(6n + 4) {
+  --rc-rgb: 29, 78, 216;
+  --rc-rgb2: 79, 70, 229;
+  --rc-accent: #c7d2fe;
+}
+.radio-card:nth-child(6n + 5) {
+  --rc-rgb: 30, 64, 175;
+  --rc-rgb2: 56, 189, 248;
+  --rc-accent: #bae6fd;
+}
+.radio-card:nth-child(6n + 6) {
+  --rc-rgb: 14, 165, 233;
+  --rc-rgb2: 13, 110, 253;
+  --rc-accent: #7dd3fc;
+}
+.radio-card:hover {
+  border-color: rgba(var(--rc-rgb), 0.9);
+  box-shadow: 0 6px 18px rgba(var(--rc-rgb), 0.18);
+  transform: translateY(-1px);
+}
+.radio-card:has(.form-check-input:checked) {
+  border-color: rgb(var(--rc-rgb));
+  box-shadow: 0 0 0 3px rgba(var(--rc-rgb), 0.16), 0 8px 20px rgba(var(--rc-rgb), 0.18);
+}
+.radio-card .form-check-input {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  cursor: pointer;
+  border: 2px solid rgba(var(--rc-rgb), 0.75);
+  background-color: #ffffff;
+  flex-shrink: 0;
+}
+.radio-card .form-check-input:checked {
+  background-image: none;
+  background-color: rgb(var(--rc-rgb));
+  border-color: rgb(var(--rc-rgb));
+  box-shadow: inset 0 0 0 3px #ffffff;
+}
+.radio-card:has(.form-check-input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(0.5);
+}
+.radio-card:has(.form-check-input:disabled):hover {
+  transform: none;
+  border-color: rgba(var(--rc-rgb), 0.45);
+  box-shadow: none;
+}
+.radio-card .form-check-input:focus {
+  box-shadow: 0 0 0 0.22rem rgba(var(--rc-rgb), 0.3);
+}
+.radio-card-label {
+  font-size: 0.93rem;
+  font-weight: 600;
+  color: #27313f;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+.radio-card:has(.form-check-input:checked) .radio-card-label {
+  color: rgb(var(--rc-rgb));
+  font-weight: 700;
+}
+.communication-sheet {
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.communication-block {
+  padding: 0.6rem 0.85rem 0.85rem;
+}
+.communication-block + .communication-block { border-top: 1px dashed #e9ecef; }
+.communication-block-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6c757d;
+  margin-bottom: 0.4rem;
+}
+.communication-block-body {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+}
+.communication-block-body p:last-child { margin-bottom: 0; }
+.communication-block-locked .communication-block-body { color: #212529; }
+.communication-block .rich-editor-wrap .ck-editor__editable { min-height: 160px; }
+/* Complaint summary card - responsive label/value rows */
+.summary-list .summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.summary-list .summary-label { flex: 0 1 auto; }
+.summary-list .summary-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.summary-list .summary-badge {
+  display: inline-block;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.35;
+  max-width: 100%;
+}
+@media (max-width: 575.98px) {
+  .summary-list .summary-row { flex-direction: column; gap: 0.15rem; }
+  .summary-list .summary-value { text-align: left; }
+}

@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard';
 import BODDashboard from './pages/BODDashboard';
 import ComplaintList from './pages/ComplaintList';
 import ComplaintDetail from './pages/ComplaintDetail';
+import ComplaintWithdrawalUpdate from './pages/ComplaintWithdrawalUpdate';
 import FileComplaint from './pages/FileComplaint';
 import MyComplaints from './pages/MyComplaints';
 import AgendaList from './pages/AgendaList';
@@ -64,6 +65,7 @@ function App() {
         <Route path="complaints" element={<ComplaintList />} />
         <Route path="complaints/:id" element={<ComplaintDetail />} />
         <Route path="my-complaints" element={<MyComplaints />} />
+        <Route path="withdrawal/update" element={<ComplaintWithdrawalUpdate />} />
         <Route path="file-complaint" element={<FileComplaint />} />
         <Route path="agenda" element={<AgendaList />} />
         <Route path="agenda/generate" element={<AgendaGenerate />} />

@@ -688,3 +688,141 @@
     align-items: flex-start;
   }
 }
+
+/* ======================= COMPLAINT DETAIL RESPONSIVE ======================= */
+.complaint-detail-page {
+  min-width: 0;
+}
+
+/* prevent flex/grid children from overflowing their containers */
+.complaint-detail-page .page-header > div,
+.complaint-detail-page .page-header-actions,
+.complaint-detail-page .ds-card,
+.complaint-detail-page .ds-card .card-body,
+.complaint-detail-page .row > [class*='col-'] {
+  min-width: 0;
+}
+
+.complaint-detail-page .page-title,
+.complaint-detail-page .page-subtitle {
+  overflow-wrap: anywhere;
+}
+
+/* card headers wrap instead of pushing badges outside the card */
+.complaint-detail-page .ds-card .card-header {
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
+}
+
+.complaint-detail-page .ds-card .card-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.complaint-detail-page .ds-card .card-header .badge-soft {
+  white-space: normal;
+}
+
+/* detail values (emails, addresses, complaint numbers) wrap inside the card */
+.complaint-detail-page dd {
+  overflow-wrap: anywhere;
+}
+
+/* marked-as-similar banner */
+.complaint-detail-page .similar-cases-body {
+  min-width: 0;
+}
+.complaint-detail-page .similar-cases-list {
+  padding-left: 1.1rem;
+}
+.complaint-detail-page .similar-cases-item {
+  overflow-wrap: anywhere;
+}
+.complaint-detail-page .similar-cases-item .badge-soft {
+  white-space: normal;
+}
+
+/* similar-complaint candidate radio card with the View Complaint Copy action */
+.complaint-detail-page .similar-candidate-card {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.complaint-detail-page .similar-candidate-body {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.complaint-detail-page .similar-candidate-body .radio-card-label {
+  overflow-wrap: anywhere;
+}
+.complaint-detail-page .similar-candidate-body .badge-soft {
+  white-space: normal;
+}
+.complaint-detail-page .similar-candidate-btn {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+/* summary rows keep labels and values inside the card */
+.complaint-detail-page .card-body .d-flex.justify-content-between {
+  gap: 0.75rem;
+}
+.complaint-detail-page .card-body .d-flex.justify-content-between > * {
+  min-width: 0;
+}
+.complaint-detail-page .card-body .d-flex.justify-content-between > .fw-semibold {
+  overflow-wrap: anywhere;
+}
+
+/* documents / attachments */
+.complaint-detail-page .doc-chip {
+  min-width: 0;
+}
+.complaint-detail-page .doc-name {
+  overflow-wrap: anywhere;
+}
+
+/* alerts (withdrawal, clubbing decisions, etc.) wrap their text */
+.complaint-detail-page .alert {
+  overflow-wrap: anywhere;
+}
+.complaint-detail-page .alert > div {
+  min-width: 0;
+}
+
+/* radio cards: long labels/buttons never spill out of the card */
+.complaint-detail-page .radio-card {
+  min-width: 0;
+}
+.complaint-detail-page .radio-card-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.complaint-detail-page .radio-card .btn {
+  white-space: normal;
+  max-width: 100%;
+}
+
+@media (max-width: 991.98px) {
+  .complaint-detail-page .page-header-actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .complaint-detail-page .page-header-actions .btn,
+  .complaint-detail-page .page-header-actions .header-date {
+    flex: 1 1 100%;
+  }
+  .complaint-detail-page .radio-card {
+    flex-wrap: wrap;
+  }
+  .complaint-detail-page .similar-candidate-body {
+    flex-basis: 100%;
+  }
+  .complaint-detail-page .similar-candidate-btn {
+    width: 100%;
+  }
+}

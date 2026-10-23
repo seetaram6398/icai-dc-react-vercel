@@ -18,6 +18,8 @@ const UPLOAD_DIRS = {
   stay: 'StayAttach',
   soaction: 'SOAction',
   respondent: 'RespondentReply',
+  withdrawal: 'Withdrawal',
+  workflow: 'Workflow',
 };
 
 // Vercel Functions reject request bodies larger than 4.5 MB, so anything

@@ -6,6 +6,7 @@ const cookieParser = require('cookie-parser');
 const db = require('./config/db');
 const { verifyToken } = require('./services/auth');
 const { resolveDocumentPath, normalizeStoredPath } = require('./services/documents');
+const { checkDocumentAccess } = require('./services/documentAccess');
 
 // On Vercel, uploaded files live in Vercel Blob; the local Documents folder is
 // only used when the server runs standalone (dev / VM).
@@ -46,15 +47,32 @@ app.use('/api/captcha', require('./routes/captcha'));
 // (browser <a href="/documents/..."> clicks only send the cookie).
 function documentAuth(req, res, next) {
   const header = req.headers.authorization || '';
-  if (header.startsWith('Bearer ') && verifyToken(header.slice(7))) return next();
-  const cookie = req.cookies && req.cookies.icai_token;
-  if (cookie && verifyToken(cookie)) return next();
-  return res.status(401).json({ error: 'Not authenticated' });
+  let decoded = null;
+  if (header.startsWith('Bearer ')) decoded = verifyToken(header.slice(7));
+  if (!decoded) {
+    const cookie = req.cookies && req.cookies.icai_token;
+    if (cookie) decoded = verifyToken(cookie);
+  }
+  if (!decoded) return res.status(401).json({ error: 'Not authenticated' });
+  req.user = decoded;
+  next();
 }
 app.use('/documents', documentAuth, async (req, res) => {
   const rel = normalizeStoredPath(req.path);
   const resolved = resolveDocumentPath(req.path.replace(/^\/+/, ''));
   if (resolved) {
+    // A document attached by an internal user is not opened by the respondent,
+    // the complainant or the third party / answerable member.
+    try {
+      const access = await checkDocumentAccess(req.user, resolved.rel);
+      if (!access.allowed) {
+        return res.status(403).json({ error: access.reason || 'You are not allowed to view this document' });
+      }
+    } catch (e) {
+      // Never let a lookup problem silently open an internal document.
+      console.error('document access check failed:', e);
+      return res.status(500).json({ error: 'Server error' });
+    }
     res.setHeader('Cache-Control', 'no-store');
     return res.sendFile(resolved.abs);
   }
@@ -105,6 +123,11 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
+});
+
+// A rejected promise in a route handler must not take the whole server down.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
 });
 
 // On Vercel the exported app is invoked as a serverless function; only start a

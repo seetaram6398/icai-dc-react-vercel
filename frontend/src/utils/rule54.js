@@ -26,6 +26,30 @@ export const RULE_6_PROVISO = '';
 
 export const RULE_54 = { a: RULE_54_A, b: RULE_54_B, c: RULE_54_C, proviso: RULE_54_PROVISO };
 
+/**
+ * Which clause of Rule 5(4) a recommendation made by the SO falls under.
+ * @param {string} recommendation 'Registration' | 'Clubbing before Director' |
+ *   'Clubbing before Committee' | 'Closure before Committee'
+ * @returns {'a'|'b'|'c'|null} null for a registration recommendation.
+ */
+export function rule54ClauseFor(recommendation) {
+  const t = String(recommendation || '').trim().toLowerCase();
+  if (!t || t === 'registration') return null;
+  if (t.includes('clubbing before director')) return 'a';
+  if (t.includes('clubbing before committee')) return 'b';
+  if (t.includes('closure before committee')) return 'c';
+  return null;
+}
+
+/**
+ * The wording of the Rule 5(4) clause that applies to a recommendation.
+ * @returns {string} '' when the recommendation is a registration.
+ */
+export function rule54TextFor(recommendation) {
+  const clause = rule54ClauseFor(recommendation);
+  return clause ? RULE_54[clause] : '';
+}
+
 // Previous complaint still pending before the Board of Discipline / Committee
 // (Director's prima facie opinion already formed) -> Rule 5(4)(b).
 const B_PENDING = [6, 11, 18, 25, 29, 36, 65, 68, 69];
@@ -76,12 +100,25 @@ export const WITHDRAWAL_FLOW_STATUSES = [127, 128, 129];
 // withdrawal card is hidden until the complaint reaches the Director (status 5+).
 export const INITIAL_WITHDRAWAL_STATUSES = [1, 2, 3, 4];
 
-export function canWithdraw(statusId) {
+// From "Rejoinder sought from the Complainant" (status 22) onwards the case has
+// advanced too far for a fresh letter of withdrawal. Status 124 (recommendation
+// to the Working Officer) is an early scrutiny status despite its numeric id.
+export const WITHDRAWAL_BLOCKED_FROM_STATUS = 22;
+export const WITHDRAWAL_EARLY_STATUSES = [124];
+
+export function isLateWithdrawalStage(statusId) {
   const s = Number(statusId);
+  return s >= WITHDRAWAL_BLOCKED_FROM_STATUS && !WITHDRAWAL_EARLY_STATUSES.includes(s);
+}
+
+export function canWithdraw(statusId, isClubbedOrClosure) {
+  const s = Number(statusId);
+  if (isClubbedOrClosure) return false;
   return (
     !INITIAL_WITHDRAWAL_STATUSES.includes(s) &&
     !CLOSED_STATUSES.includes(s) &&
-    !WITHDRAWAL_FLOW_STATUSES.includes(s)
+    !WITHDRAWAL_FLOW_STATUSES.includes(s) &&
+    !isLateWithdrawalStage(s)
   );
 }
 

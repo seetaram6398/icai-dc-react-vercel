@@ -26,6 +26,10 @@ const UPLOAD_DIRS = {
   stay: 'StayAttach',
   soaction: 'SOAction',
   respondent: 'RespondentReply',
+  withdrawal: 'Withdrawal',
+  // Workflow attachments - the documents attached by the internal users while
+  // the complaint moves through the stages.
+  workflow: 'Workflow',
 };
 
 const DOC_ROOT = path.join(__dirname, '..', '..', '..', 'Documents');
@@ -34,7 +38,7 @@ const DOC_ROOT = path.join(__dirname, '..', '..', '..', 'Documents');
 // local Documents folder is only used when running standalone (dev / VM).
 const ON_VERCEL = !!process.env.VERCEL;
 const BLOB_ENABLED = !!process.env.BLOB_READ_WRITE_TOKEN;
-const PDF_ONLY_TYPES = new Set(['ddtoSO', 'respondent']);
+const PDF_ONLY_TYPES = new Set(['ddtoSO', 'respondent', 'withdrawal', 'workflow']);
 // Vercel Functions reject request bodies larger than 4.5 MB; larger files use
 // the browser -> Vercel Blob client-upload flow below instead.
 const MAX_FUNCTION_BYTES = ON_VERCEL ? 4 * 1024 * 1024 : 20 * 1024 * 1024;
@@ -48,9 +52,16 @@ function uniqueFilename(originalname) {
 function pdfOnlyError(type, originalname) {
   if (!PDF_ONLY_TYPES.has(type)) return null;
   if (path.extname(originalname || '').toLowerCase() === '.pdf') return null;
-  return type === 'ddtoSO'
-    ? 'Only PDF files are supported for DD to SO attachments'
-    : 'Only PDF files are supported for respondent replies';
+  if (type === 'ddtoSO') {
+    return 'Only PDF files are supported for DD to SO attachments';
+  }
+  if (type === 'withdrawal') {
+    return 'Only PDF files are supported for the letter of withdrawal';
+  }
+  if (type === 'workflow') {
+    return 'Only PDF files are supported for workflow attachments';
+  }
+  return 'Only PDF files are supported for respondent replies';
 }
 
 /**

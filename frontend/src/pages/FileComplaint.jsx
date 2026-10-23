@@ -191,6 +191,7 @@ export default function FileComplaint() {
   const [regulators, setRegulators] = useState([]);
   const [captcha, setCaptcha] = useState(null);
   const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [memberLookupBusy, setMemberLookupBusy] = useState(false);
 
   const [personName, setPersonName] = useState('');
   const [personMobile, setPersonMobile] = useState('');
@@ -206,6 +207,7 @@ export default function FileComplaint() {
   const [memberRegNo, setMemberRegNo] = useState('');
   const [memAnsCaptcha, setMemAnsCaptcha] = useState(null);
   const [memAnsCaptchaAnswer, setMemAnsCaptchaAnswer] = useState('');
+  const [memAnsLookupBusy, setMemAnsLookupBusy] = useState(false);
   const [memName, setMemName] = useState('');
   const [memRegNo, setMemRegNo] = useState('');
   const [memMobile, setMemMobile] = useState('');
@@ -572,50 +574,60 @@ export default function FileComplaint() {
   const onGetMemberDetails = async () => {
     if (!memberRegNo) { popup.warning('Please enter Membership No'); return; }
     if (!captchaAnswer) { popup.warning('Please enter CAPTCHA'); return; }
+    setMemberLookupBusy(true);
     try {
-      const vr = await api.post('/captcha/verify', { id: captcha.id, answer: captchaAnswer });
-      if (!vr.data.valid) { popup.warning('Invalid CAPTCHA'); loadCaptcha(); return; }
-    } catch (_) { popup.warning('Invalid CAPTCHA'); loadCaptcha(); return; }
-    try {
-      const { data } = await api.post('/auth/member-lookup', { membershipNo: memberRegNo });
-      const st = commStates.find((s) => s.label?.toLowerCase() === (data.professionalState || '').toLowerCase());
-      setForm((f) => ({
-        ...f,
-        resRegistrationNo: memberRegNo,
-        resName: data.name || '',
-        resEmail: data.email || '',
-        resMobile: data.mobile || '',
-        resProfessionalAddress: data.professionalAddress || '',
-        resRStateName: data.professionalState || '',
-        resRCityName: data.city || '',
-        resRegion: st?.Region || '',
-      }));
-      loadCaptcha();
-    } catch (ex) {
-      popup.error(ex.response?.data?.error || 'Member not found');
-      loadCaptcha();
+      try {
+        const vr = await api.post('/captcha/verify', { id: captcha.id, answer: captchaAnswer });
+        if (!vr.data.valid) { popup.warning('Invalid CAPTCHA'); loadCaptcha(); return; }
+      } catch (_) { popup.warning('Invalid CAPTCHA'); loadCaptcha(); return; }
+      try {
+        const { data } = await api.post('/auth/member-lookup', { membershipNo: memberRegNo });
+        const st = commStates.find((s) => s.label?.toLowerCase() === (data.professionalState || '').toLowerCase());
+        setForm((f) => ({
+          ...f,
+          resRegistrationNo: memberRegNo,
+          resName: data.name || '',
+          resEmail: data.email || '',
+          resMobile: data.mobile || '',
+          resProfessionalAddress: data.professionalAddress || '',
+          resRStateName: data.professionalState || '',
+          resRCityName: data.city || '',
+          resRegion: st?.Region || '',
+        }));
+        loadCaptcha();
+      } catch (ex) {
+        popup.error(ex.response?.data?.error || 'Member not found');
+        loadCaptcha();
+      }
+    } finally {
+      setMemberLookupBusy(false);
     }
   };
 
   const onGetMemberAnsDetails = async () => {
     if (!memRegNo) { popup.warning('Please enter Membership No'); return; }
     if (!memAnsCaptchaAnswer) { popup.warning('Please enter CAPTCHA'); return; }
+    setMemAnsLookupBusy(true);
     try {
-      const vr = await api.post('/captcha/verify', { id: memAnsCaptcha.id, answer: memAnsCaptchaAnswer });
-      if (!vr.data.valid) { popup.warning('Invalid CAPTCHA'); loadMemberAnsCaptcha(); return; }
-    } catch (_) { popup.warning('Invalid CAPTCHA'); loadMemberAnsCaptcha(); return; }
-    try {
-      const { data } = await api.post('/auth/member-lookup', { membershipNo: memRegNo });
-      setMemName(data.name || '');
-      setMemMobile(data.mobile || '');
-      setMemEmail(data.email || '');
-      setMemProAddress(data.professionalAddress || '');
-      setMemProState(data.professionalState || '');
-      setMemProCity(data.city || '');
-      loadMemberAnsCaptcha();
-    } catch (ex) {
-      popup.error(ex.response?.data?.error || 'Member not found');
-      loadMemberAnsCaptcha();
+      try {
+        const vr = await api.post('/captcha/verify', { id: memAnsCaptcha.id, answer: memAnsCaptchaAnswer });
+        if (!vr.data.valid) { popup.warning('Invalid CAPTCHA'); loadMemberAnsCaptcha(); return; }
+      } catch (_) { popup.warning('Invalid CAPTCHA'); loadMemberAnsCaptcha(); return; }
+      try {
+        const { data } = await api.post('/auth/member-lookup', { membershipNo: memRegNo });
+        setMemName(data.name || '');
+        setMemMobile(data.mobile || '');
+        setMemEmail(data.email || '');
+        setMemProAddress(data.professionalAddress || '');
+        setMemProState(data.professionalState || '');
+        setMemProCity(data.city || '');
+        loadMemberAnsCaptcha();
+      } catch (ex) {
+        popup.error(ex.response?.data?.error || 'Member not found');
+        loadMemberAnsCaptcha();
+      }
+    } finally {
+      setMemAnsLookupBusy(false);
     }
   };
 
@@ -1037,17 +1049,17 @@ export default function FileComplaint() {
           <div className="row g-3 mb-3">
             <div className="col-md-12">
               <label className="form-label fw-bold">Respondent is a:</label>
-              <div className="d-flex gap-4">
-                <div className="form-check">
+              <div className="radio-card-list">
+                <label className="radio-card">
                   <input className="form-check-input" type="radio" name="resType" id="resMember" value="member"
                     checked={form.resType === 'member'} onChange={() => setForm({ ...form, resType: 'member' })} />
-                  <label className="form-check-label" htmlFor="resMember">Member</label>
-                </div>
-                <div className="form-check">
+                  <span className="radio-card-label">Member</span>
+                </label>
+                <label className="radio-card">
                   <input className="form-check-input" type="radio" name="resType" id="resFirm" value="firm"
                     checked={form.resType === 'firm'} onChange={() => setForm({ ...form, resType: 'firm' })} />
-                  <label className="form-check-label" htmlFor="resFirm">Firm</label>
-                </div>
+                  <span className="radio-card-label">Firm</span>
+                </label>
               </div>
             </div>
           </div>
@@ -1089,8 +1101,12 @@ export default function FileComplaint() {
               </div>
               <div className="col-md-3">
                 <label className="form-label">&nbsp;</label>
-                <button className="btn btn-primary w-100" style={{ height: 38 }} onClick={onGetMemberDetails} type="button">
-                  <i className="bi bi-search me-1"></i>Get Member Details
+                <button className="btn btn-primary w-100" style={{ height: 38 }} onClick={onGetMemberDetails} type="button" disabled={memberLookupBusy}>
+                  {memberLookupBusy ? (
+                    <><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Loading...</>
+                  ) : (
+                    <><i className="bi bi-search me-1"></i>Get Member Details</>
+                  )}
                 </button>
               </div>
             </div>
@@ -1224,8 +1240,12 @@ export default function FileComplaint() {
                 </div>
                 <div className="col-md-2">
                   <label className="form-label">&nbsp;</label>
-                  <button className="btn btn-primary w-100" style={{ height: 38 }} onClick={onGetMemberAnsDetails} type="button">
-                    <i className="bi bi-search me-1"></i>Get Details
+                  <button className="btn btn-primary w-100" style={{ height: 38 }} onClick={onGetMemberAnsDetails} type="button" disabled={memAnsLookupBusy}>
+                    {memAnsLookupBusy ? (
+                      <><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Loading...</>
+                    ) : (
+                      <><i className="bi bi-search me-1"></i>Get Details</>
+                    )}
                   </button>
                 </div>
               </div>

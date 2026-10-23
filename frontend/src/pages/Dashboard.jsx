@@ -82,6 +82,17 @@ export default function Dashboard() {
   const totalAbout = rows.reduce((s, r) => s + (Number(r.AboutToExpire) || 0), 0);
   const totalExpired = rows.reduce((s, r) => s + (Number(r.Expired) || 0), 0);
 
+  // Reporting Officers must not see the long tail of statuses with no cases.
+  // Keep statuses that actually have cases, plus the three stages the RO works
+  // on (49, 54, 57) so their own pipeline is always visible.
+  const RO_STATUS_IDS = [49, 54, 57];
+  const displayRows = ut === 10
+    ? rows.filter((r) => {
+        const total = (Number(r.Pending) || 0) + (Number(r.AboutToExpire) || 0) + (Number(r.Expired) || 0);
+        return total > 0 || RO_STATUS_IDS.includes(Number(r.StatusID));
+      })
+    : rows;
+
   useEffect(() => {
     if (ut === 6) navigate('/bod-dashboard', { replace: true });
   }, [ut, navigate]);
@@ -132,7 +143,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stat summary cards */}
-      {!loading && rows.length > 0 && (
+      {!loading && displayRows.length > 0 && (
         <div className="stat-row">
           <div className="stat-box" style={{ borderLeft: '3px solid #1a4a8a' }}>
             <div className="stat-box-icon" style={{ background: '#e8effa', color: '#1a4a8a' }}>
@@ -299,7 +310,7 @@ export default function Dashboard() {
               <i className="bi bi-bar-chart-line" />
               Complaint Status Summary
             </div>
-            <span className="badge-soft badge-soft-neutral">{rows.length} statuses</span>
+            <span className="badge-soft badge-soft-neutral">{displayRows.length} statuses</span>
           </div>
           <div className="card-body p-0">
             <div className="table-responsive">
@@ -314,7 +325,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, idx) => (
+                  {displayRows.map((r, idx) => (
                       <tr key={r.StatusID} onClick={() => navigate(`/complaints?statusIds=${r.StatusID}`)}>
                         <td className="text-center text-muted" style={{ fontSize: '0.8rem' }}>{idx + 1}</td>
                         <td>
@@ -325,7 +336,7 @@ export default function Dashboard() {
                         <td className="text-center col-num">{Number(r.Expired) || 0}</td>
                       </tr>
                     ))}
-                  {rows.length === 0 && (
+                  {displayRows.length === 0 && (
                     <tr>
                       <td colSpan="5">
                         <div className="empty-state">
@@ -337,7 +348,7 @@ export default function Dashboard() {
                     </tr>
                   )}
                 </tbody>
-                {rows.length > 0 && (
+                {displayRows.length > 0 && (
                   <tfoot>
                     <tr>
                       <td colSpan="2" style={{ fontWeight: 700, fontSize: '0.88rem' }}>Total</td>

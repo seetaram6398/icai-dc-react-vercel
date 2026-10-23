@@ -34,6 +34,10 @@ function ComplaintList() {
   const [statuses, setStatuses] = useState([]);
   const ut = Number(user?.UserType);
   const aspxView = ut === 3;
+  // Rule 5(4) - the staff (Admin / DD / SO) also see the clubbing and closure
+  // relationships in the complaint list; the parties only ever see complaint
+  // numbers, never any other detail of a clubbed complaint.
+  const showClubbingDetails = [1, 4, 5].includes(ut);
   const statusIds = searchParams.get('statusIds') || '';
   const [draft, setDraft] = useState(statusIds);
   const [q, setQ] = useState({ search: '', dateFrom: '', dateTo: '' });
@@ -367,6 +371,7 @@ function ComplaintList() {
                         <th className="text-center">Days Since Receipt</th>
                         <th className="text-end">Fee Paid</th>
                         <th>Current Status</th>
+                        <th>Clubbed / Closure</th>
                         <th className="text-end" style={{ width: 140 }}>Action</th>
                       </>
                     )}
@@ -438,15 +443,31 @@ function ComplaintList() {
                           {String(c.IsStay) === '1' && <i className="bi bi-pause-circle ms-1" title="Stay" />}
                         </span>
                       </td>
+                      <td>
+                        {c.ClubbedWithCompNo ? (
+                          <div className="small">
+                            <i className="bi bi-link-45deg me-1" />
+                            <span className="fw-semibold">{c.ClubbedWithCompNo}</span>
+                            {showClubbingDetails && c.ClubRule ? (
+                              <span className="text-muted"> · 5(4)({c.ClubRule})</span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {Number(c.ClubbedAgainstCount) > 0 ? (
+                          <div className="small">
+                            <span className="badge-soft badge-soft-primary">
+                              {c.ClubbedAgainstCount} clubbed against this
+                            </span>
+                          </div>
+                        ) : null}
+                        {!c.ClubbedWithCompNo && !Number(c.ClubbedAgainstCount) ? (
+                          <span className="text-muted">—</span>
+                        ) : null}
+                      </td>
                       <td className="text-end" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" className="btn btn-sm btn-outline-primary me-1" onClick={() => viewComplaint(c)}>
+                        <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => viewComplaint(c)}>
                           <i className="bi bi-eye" /> View
                         </button>
-                        {[4, 10].includes(ut) && (
-                          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => openAssign(c)}>
-                            <i className="bi bi-send" /> Assign
-                          </button>
-                        )}
                       </td>
                     </tr>
                   ))
@@ -456,6 +477,7 @@ function ComplaintList() {
                 <tfoot>
                   <tr>
                     <td colSpan="7">Total</td>
+                    <td />
                     <td />
                     <td className="text-center fw-bold" style={{ fontSize: '1rem' }}>{rows.length}</td>
                   </tr>

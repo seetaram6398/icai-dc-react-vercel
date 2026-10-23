@@ -6,9 +6,52 @@ const { buildScrutinyPdf } = require('../services/scrutinyPdf');
 const { buildScrutinyDefaults } = require('../services/scrutinyDefaults');
 const { ensureRespondentUserForComplaint } = require('../services/respondent');
 const { statusText } = require('../utils/statusText');
+const {
+  isInternalUser,
+  resolvePartyRole,
+  isClubbedComplainant,
+  filterHistoryForParty,
+  buildInternalDocuments,
+  buildAdRequestState,
+  viewerHasSubmitted,
+  AD_PARTIES,
+} = require('../services/complaintAccess');
 
 const router = express.Router();
 router.use(authMiddleware);
+
+async function getComplaintAccess(req, id) {
+  try {
+    const rows = await query('SELECT CompID, UserID, ResEmailID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    if (rows.length === 0) return { allowed: false, reason: 'Complaint not found' };
+    const c = rows[0];
+    const answerable = await query('SELECT * FROM tbl_AnswerableMember WHERE CompID=@id', { id });
+    let viewerRole = resolvePartyRole(req.user, c, answerable);
+    const directComplainant = viewerRole === 'complainant';
+    const viewerIsInternal = isInternalUser(req.user) && !viewerRole;
+    if (!viewerIsInternal && !viewerRole) {
+      const clubbedParty = isClubbedComplainant(req.user, c) ||
+        (await query(
+          'SELECT TOP 1 CompID FROM tbl_NewComplaint WHERE ClubbedWithCompID=@id AND UserID=@uid',
+          { id, uid: Number(req.user.UserID) }
+        )).length > 0;
+      if (!clubbedParty) return { allowed: false, reason: 'Not allowed' };
+      viewerRole = 'complainant';
+    }
+    return { allowed: true, viewerRole, viewerIsInternal, directComplainant, complaint: c };
+  } catch (e) {
+    return { allowed: false, reason: 'Server error' };
+  }
+}
+
+// Rule 5(4) / Rule 6 - statuses at which a complaint is already clubbed or
+// closed. A complaint sitting at one of these stages cannot take a new
+// complaint on board: the new complaint has to be dealt with on its own
+// merits (clubbing candidates are filtered out on the same list).
+//   66 - Clubbing Decision, 68 - Recommended to Committee for Closure,
+//   69 - Recommendation to Committee from DD, 123 - Clubbing Case Communicated,
+//   13 - Closure communicated, 14 - Closed, 130 - Withdrawal permitted.
+const CLUBBED_OR_CLOSED_STATUSES = [13, 14, 66, 68, 69, 123, 130];
 
 // Helper: generate complaint number (mirrors original GetComplaintNo + PR/G/... formatting)
 async function generateComplaintNo(isGov, year) {
@@ -68,13 +111,18 @@ function buildListQuery(filters, user) {
              StatusName, CompTypeName, ComplainantName, DaysSinceEntry,
              TaxableAmount, IsStay, EmailID, MobileNo, ResMobileNo, ResProfAddress,
              Address, Landmark, Region, RStateName, RCityname, RelationName,
-             AadharNo, GSTINNo, ResLandlineNo, FormType, NameofFirm, ResRegistrationNo
+             AadharNo, GSTINNo, ResLandlineNo, FormType, NameofFirm, ResRegistrationNo,
+             ClubbedWithCompID, ClubbedWithCompNo, ClubRule, ClubbedAgainstCount
       FROM (
         SELECT nc.CompID, nc.CompNo, nc.ResName, nc.FirmNo, nc.IsFirm, nc.EntryDate, nc.StatusID,
                nc.TaxableAmount, nc.IsStay, nc.EmailID, nc.MobileNo, nc.ResMobileNo,
                nc.ResProfAddress, nc.Address, nc.Landmark, nc.Region, nc.RStateName,
                nc.RCityname, nc.RelationName, nc.AadharNo, nc.GSTINNo, nc.ResLandlineNo,
                nc.FormType, nc.NameofFirm, nc.ResRegistrationNo, nc.UserID, nc.Name,
+               nc.ClubbedWithCompID, nc.ClubRule,
+               pc.CompNo AS ClubbedWithCompNo,
+               (SELECT COUNT(*) FROM tbl_NewComplaint x
+                 WHERE x.ClubbedWithCompID = nc.CompID AND (x.IsTemp IS NULL OR x.IsTemp=0)) AS ClubbedAgainstCount,
                sm.StatusName, ct.CompTypeName, u.NameOfTheUser AS ComplainantName,
                CAST(DATEDIFF(day, nc.EntryDate, GETDATE()) AS int) AS DaysSinceEntry,
                ROW_NUMBER() OVER (
@@ -85,13 +133,14 @@ function buildListQuery(filters, user) {
         INNER JOIN tbl_StatusMaster sm ON nc.StatusID = sm.StatusID
         LEFT JOIN tbl_CompType ct ON nc.CompType = ct.CompTypeID
         LEFT JOIN tbl_Users u ON nc.UserID = u.UserID
+        LEFT JOIN tbl_NewComplaint pc ON nc.ClubbedWithCompID = pc.CompID
         WHERE nc.IsTemp IS NULL OR nc.IsTemp = 0) t`;
   const params = {};
   const conds = [];
 
   let ids = statusIds ? String(statusIds).split(',').map(Number).filter(Boolean) : [];
   if (Number(user.UserType) === 10 && !ids.length) {
-    ids = [49];
+    ids = [49, 54, 57];
     conds.push(`t.CompID IN (
           SELECT CompaintID FROM tbl_ComplaintStatus
           WHERE UserToID=@roId AND UserToID IS NOT NULL AND StatusID IN (49,54,57))`);
@@ -558,6 +607,9 @@ async function buildDownloadDoc(id, kind, origin) {
  */
 router.get('/:id/form/pdf', async (req, res) => {
   try {
+    const access = await getComplaintAccess(req, req.params.id);
+    if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!(access.viewerIsInternal || access.directComplainant)) return res.status(403).json({ error: 'Not allowed' });
     const out = await buildComplaintPdf(req.params.id);
     if (!out || !out.data) return res.status(404).json({ error: 'Complaint not found' });
     res.setHeader('Content-Type', 'application/pdf');
@@ -576,6 +628,9 @@ router.get('/:id/form/pdf', async (req, res) => {
  */
 router.get('/:id/compilation/pdf', async (req, res) => {
   try {
+    const access = await getComplaintAccess(req, req.params.id);
+    if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!access.viewerIsInternal) return res.status(403).json({ error: 'Not allowed' });
     const out = await buildComplaintPdf(req.params.id, { includeHistory: true });
     if (!out || !out.data) return res.status(404).json({ error: 'Complaint not found' });
     res.setHeader('Content-Type', 'application/pdf');
@@ -595,6 +650,9 @@ router.get('/:id/compilation/pdf', async (req, res) => {
  */
 router.get('/:id/scrutiny/prefill', async (req, res) => {
   try {
+    const access = await getComplaintAccess(req, req.params.id);
+    if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!access.viewerIsInternal) return res.status(403).json({ error: 'Not allowed' });
     const id = req.params.id;
     const rows = await query(
       `SELECT nc.*, ct.CompTypeName,
@@ -652,6 +710,9 @@ router.get('/:id/scrutiny/prefill', async (req, res) => {
  */
 router.get('/:id/scrutiny/pdf', async (req, res) => {
   try {
+    const access = await getComplaintAccess(req, req.params.id);
+    if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!access.viewerIsInternal) return res.status(403).json({ error: 'Not allowed' });
     const out = await buildScrutinyPdf(req.params.id);
     if (!out || !out.data) return res.status(404).json({ error: 'Complaint not found' });
     res.setHeader('Content-Type', 'application/pdf');
@@ -670,6 +731,9 @@ router.get('/:id/scrutiny/pdf', async (req, res) => {
  */
 router.get('/:id/form', async (req, res) => {
   try {
+    const access = await getComplaintAccess(req, req.params.id);
+    if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!(access.viewerIsInternal || access.directComplainant)) return res.status(403).json({ error: 'Not allowed' });
     const html = await buildDownloadDoc(req.params.id, 'form', `${req.protocol}://${req.get('host')}`);
     if (!html) return res.status(404).json({ error: 'Complaint not found' });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -687,6 +751,9 @@ router.get('/:id/form', async (req, res) => {
  */
 router.get('/:id/compilation', async (req, res) => {
   try {
+    const access = await getComplaintAccess(req, req.params.id);
+    if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!access.viewerIsInternal) return res.status(403).json({ error: 'Not allowed' });
     const html = await buildDownloadDoc(req.params.id, 'compilation', `${req.protocol}://${req.get('host')}`);
     if (!html) return res.status(404).json({ error: 'Complaint not found' });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -750,6 +817,71 @@ router.get('/search', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/complaints/lookup?compNo=PR/001/2026
+ * Exact complaint-number lookup used by the complainant end "Withdrawal of
+ * Complaint" screen. The complainant may only pull up his own complaint.
+ */
+router.get('/lookup', async (req, res) => {
+  try {
+    const compNo = String(req.query.compNo || '').trim();
+    if (!compNo) return res.status(400).json({ error: 'Enter the complaint number' });
+    const params = { compNo };
+    let scope = '';
+    const ut = Number(req.user.UserType);
+    if (ut === 3) {
+      scope = ' AND nc.UserID=@ownUserId';
+      params.ownUserId = Number(req.user.UserID);
+    } else if (![1, 4, 5].includes(ut)) {
+      return res.status(403).json({ error: 'You are not allowed to look up this complaint' });
+    }
+    const rows = await query(
+      `SELECT TOP 1 nc.CompID, nc.CompNo, nc.Name AS ComplainantName, nc.ResName, nc.ResEmailID,
+              nc.ResRegistrationNo, nc.CompType, ct.CompTypeName, nc.StatusID, sm.StatusName,
+              nc.EntryDate, nc.ClubbedWithCompID, nc.ClubRule, nc.UserID,
+              pc.CompNo AS ClubbedWithCompNo, pcs.StatusName AS ClubbedWithStatusName
+       FROM tbl_NewComplaint nc
+       LEFT JOIN tbl_StatusMaster sm ON nc.StatusID = sm.StatusID
+       LEFT JOIN tbl_CompType ct ON nc.CompType = ct.CompTypeID
+       LEFT JOIN tbl_NewComplaint pc ON nc.ClubbedWithCompID = pc.CompID
+       LEFT JOIN tbl_StatusMaster pcs ON pc.StatusID = pcs.StatusID
+       WHERE (nc.IsTemp IS NULL OR nc.IsTemp=0) AND nc.CompNo = @compNo ${scope}`,
+      params
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: 'No complaint found against the complaint number entered' });
+    }
+    const row = rows[0];
+    const isClubbedOrClosed =
+      !!row.ClubbedWithCompID || CLUBBED_OR_CLOSED_STATUSES.includes(Number(row.StatusID));
+    // Mirrors canWithdraw() in frontend/src/utils/rule54.js - Rule 6 is not
+    // offered at the initial filing stages and not once the case is closed or
+    // already inside the withdrawal flow.
+    const INITIAL_WITHDRAWAL_STATUSES = [1, 2, 3, 4];
+    const CLOSED_STATUSES = [9, 12, 13, 14, 21, 33, 43, 130];
+    const WITHDRAWAL_FLOW_STATUSES = [127, 128, 129];
+    const sid = Number(row.StatusID);
+    // From "Rejoinder sought from the Complainant" (status 22) onwards the case
+    // has advanced too far for a fresh letter of withdrawal. Status 124
+    // (recommendation to the Working Officer) is an early scrutiny status.
+    const isLateWithdrawalStage = sid >= 22 && sid !== 124;
+    const canWithdraw =
+      !isClubbedOrClosed &&
+      !INITIAL_WITHDRAWAL_STATUSES.includes(sid) &&
+      !CLOSED_STATUSES.includes(sid) &&
+      !WITHDRAWAL_FLOW_STATUSES.includes(sid) &&
+      !isLateWithdrawalStage;
+    res.json({
+      ...row,
+      isClubbedOrClosed,
+      canWithdraw,
+    });
+  } catch (e) {
+    console.error('lookup complaint error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const id = req.params.id;
@@ -780,7 +912,9 @@ router.get('/:id', async (req, res) => {
     const audioVideo = await query('SELECT * FROM tbl_AudioVideoAttachment WHERE ComplaintID=@id', { id });
     const schedules = await query('SELECT * FROM tbl_ScheduleList WHERE CompID=@id', { id });
     const statusHistory = await query(
-      `SELECT cs.*, sm.StatusName, u.NameOfTheUser AS ByUserName FROM tbl_ComplaintStatus cs
+      `SELECT cs.*, sm.StatusName, u.NameOfTheUser AS ByUserName, u.UserType AS ByUserType,
+              u.Email AS ByUserEmail
+       FROM tbl_ComplaintStatus cs
        INNER JOIN tbl_StatusMaster sm ON cs.StatusID = sm.StatusID
        LEFT JOIN tbl_Users u ON cs.UserID = u.UserID
        WHERE cs.CompaintID=@id ORDER BY cs.StatusDate DESC`,
@@ -812,14 +946,77 @@ router.get('/:id', async (req, res) => {
       { id }
     );
 
+    // Who is looking at this complaint?
+    //   - internal staff (Admin / DD / SO / Officer / RO / Committee ...) work on
+    //     the case together and see every document attached by any of them.
+    //   - the parties (complainant, respondent, third party / answerable member)
+    //     only ever see the letters communicated to them and their own entries.
+    let viewerRole = resolvePartyRole(req.user, complaint[0], answerable);
+    const directComplainant = viewerRole === 'complainant';
+    const viewerIsInternal = isInternalUser(req.user) && !viewerRole;
+    if (!viewerIsInternal && !viewerRole) {
+      // The first complainant of the complaint this one is clubbed with, and the
+      // complainant of a complaint clubbed against this one, are parties too.
+      const clubbedParty = isClubbedComplainant(req.user, complaint[0]) ||
+        (await query(
+          'SELECT TOP 1 CompID FROM tbl_NewComplaint WHERE ClubbedWithCompID=@id AND UserID=@uid',
+          { id, uid: Number(req.user.UserID) }
+        )).length > 0;
+      if (!clubbedParty) {
+        return res.status(403).json({ error: 'You are not a party to this complaint' });
+      }
+      // Treat clubbed complainants as complainant for document access.
+      viewerRole = 'complainant';
+    }
+    const visibleStatusHistory = viewerIsInternal
+      ? statusHistory
+      : filterHistoryForParty(statusHistory, req.user, viewerRole);
+
+    // The additional document requested on this case and who is still to furnish
+    // it. A party does not get the list of the members who are yet to submit.
+    const adState = buildAdRequestState(statusHistory, answerable);
+    if (adState) {
+      adState.ViewerSubmitted = viewerHasSubmitted(
+        statusHistory,
+        viewerRole,
+        req.user,
+        adState.RequestCompStatusID
+      );
+      if (!viewerIsInternal) {
+        adState.PendingEmails = [];
+      }
+    }
+
+    const isComplainantViewer = viewerIsInternal || directComplainant;
+    const complaintPayload = { ...complaint[0] };
+    if (!isComplainantViewer) {
+      delete complaintPayload.BriefAttachment;
+      delete complaintPayload.MisconductAttachment;
+      delete complaintPayload.RegulatorAttachment;
+      delete complaintPayload.AadharPhoto;
+      delete complaintPayload.ComplaintantPhoto;
+      delete complaintPayload.ComplaintantSignature;
+      delete complaintPayload.ScrutinySheet;
+      delete complaintPayload.AadharNo;
+    }
+
     res.json({
-      ...complaint[0],
-      documents,
+      ...complaintPayload,
+      // Documents uploaded with the complaint belong to the complainant. They
+      // are shown to the internal staff and to the complainant only, never to
+      // the respondent or the third party.
+      documents: isComplainantViewer ? documents : [],
       factPersons,
       answerable,
-      audioVideo,
+      audioVideo: isComplainantViewer ? audioVideo : [],
       schedules,
-      statusHistory,
+      statusHistory: visibleStatusHistory,
+      // Documents attached by the internal users - internal staff only.
+      internalDocuments: viewerIsInternal ? buildInternalDocuments(statusHistory) : [],
+      // Whether the logged in user is a party of this complaint and, if so, which.
+      viewerRole,
+      viewerIsInternal,
+      additionalDocumentRequest: adState,
       perDetails: perDetails.length ? perDetails[0] : null,
       subStatus,
       similarCases,
@@ -840,17 +1037,19 @@ router.get('/:id/similar-candidates', async (req, res) => {
   try {
     const id = req.params.id;
     const src = await query(
-      'SELECT ResRegistrationNo, NatureOfAllegation FROM tbl_NewComplaint WHERE CompID=@id',
+      'SELECT ResRegistrationNo, NatureOfAllegation, EntryDate FROM tbl_NewComplaint WHERE CompID=@id',
       { id }
     );
     if (src.length === 0) return res.status(404).json({ error: 'Complaint not found' });
     const regNo = String(src[0].ResRegistrationNo || '').trim();
     const nature = String(src[0].NatureOfAllegation || '').trim();
+    const entryDate = src[0].EntryDate;
     if (!regNo && !nature) return res.json([]);
+    if (!entryDate) return res.json([]);
 
     const rows = await query(
       `SELECT nc.CompID, nc.CompNo, nc.ResName, nc.EntryDate, nc.StatusID, sm.StatusName,
-              nc.IsStay,
+              nc.IsStay, nc.ClubbedWithCompID,
               CAST(DATEDIFF(day, nc.EntryDate, GETDATE()) AS int) AS DaysSinceEntry,
               CASE WHEN sc.CompID IS NOT NULL THEN 1 ELSE 0 END AS IsLinked
        FROM tbl_NewComplaint nc
@@ -858,12 +1057,15 @@ router.get('/:id/similar-candidates', async (req, res) => {
        LEFT JOIN tbl_SimilarCase sc ON sc.CompID=@id AND sc.SCompID=nc.CompID
        WHERE (nc.IsTemp IS NULL OR nc.IsTemp=0)
          AND nc.CompID <> @id
+         AND (nc.EntryDate < @entryDate OR (nc.EntryDate = @entryDate AND nc.CompID < @id))
+         AND nc.ClubbedWithCompID IS NULL
+         AND nc.StatusID NOT IN (13,14,66,68,69,123,130)
          AND (
            (@regNo <> '' AND nc.ResRegistrationNo = @regNo)
            OR (@nature <> '' AND nc.NatureOfAllegation = @nature)
          )
        ORDER BY nc.EntryDate ASC`,
-      { id, regNo, nature }
+      { id, regNo, nature, entryDate }
     );
     res.json(rows);
   } catch (e) {
@@ -896,16 +1098,20 @@ router.put('/:id/similar', async (req, res) => {
     if (list.includes(id)) {
       return res.status(400).json({ error: 'A complaint cannot be marked similar to itself' });
     }
+    const selfRow = await query('SELECT ClubbedWithCompID, StatusID FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    if (selfRow.length && (selfRow[0].ClubbedWithCompID || [13,14,66,68,69,123,130].includes(Number(selfRow[0].StatusID)))) {
+      return res.status(400).json({ error: 'This complaint cannot be marked similar as it is already clubbed/closed' });
+    }
 
     const placeholders = list.map((_, i) => `@c${i}`).join(',');
     const targetParams = {};
     list.forEach((c, i) => { targetParams[`c${i}`] = c; });
     const found = await query(
-      `SELECT COUNT(*) AS cnt FROM tbl_NewComplaint WHERE CompID IN (${placeholders})`,
+      `SELECT COUNT(*) AS cnt FROM tbl_NewComplaint WHERE CompID IN (${placeholders}) AND ClubbedWithCompID IS NULL AND StatusID NOT IN (13,14,66,68,69,123,130)`,
       targetParams
     );
     if (Number(found[0].cnt) !== list.length) {
-      return res.status(400).json({ error: 'One of the selected similar complaints could not be found' });
+      return res.status(400).json({ error: 'One of the selected similar complaints could not be found or is already clubbed/closed' });
     }
 
     await executeNonQuery('DELETE FROM tbl_SimilarCase WHERE CompID=@id', { id });
@@ -1281,12 +1487,94 @@ router.post('/:id/complainant-rejoinder', async (req, res) => {
 });
 
 /**
+ * POST /api/complaints/:id/additional-document-request
+ * The Scrutiny Officer calls for an additional document. The document may be
+ * called for from the Complainant, the Respondent and/or the Third Party
+ * (answerable members) - any combination of them. The request is recorded on a
+ * status 51 row whose CommonField carries the parties it was made to
+ * ("ADReq=complainant;respondent").
+ * Body: { parties: ['complainant','respondent','thirdparty'], remarks, attachment }
+ */
+router.post('/:id/additional-document-request', async (req, res) => {
+  try {
+    const compId = req.params.id;
+    const { parties, remarks, attachment } = req.body;
+    const userId = Number(req.user.UserID);
+
+    if (!isInternalUser(req.user)) {
+      return res.status(403).json({ error: 'Only the internal staff can call for an additional document' });
+    }
+
+    const requested = (Array.isArray(parties) ? parties : String(parties || '').split(/[,;]/))
+      .map((p) => String(p).trim().toLowerCase())
+      .filter((p) => AD_PARTIES.includes(p));
+    const requestedFrom = Array.from(new Set(requested));
+    if (!requestedFrom.length) {
+      return res.status(400).json({
+        error: 'Select at least one party to call for the additional document from',
+      });
+    }
+    if (!remarks || !String(remarks).trim()) {
+      return res.status(400).json({ error: 'Please enter remarks' });
+    }
+    if (!attachment) {
+      return res.status(400).json({ error: 'Please upload the query letter' });
+    }
+
+    const compRow = await query(
+      'SELECT CompID, CompNo, StatusID, UserID, ResEmailID FROM tbl_NewComplaint WHERE CompID=@id',
+      { id: compId }
+    );
+    if (compRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
+    if (Number(compRow[0].StatusID) !== 56) {
+      return res.status(409).json({
+        error: 'The additional document can be called for only after the Director Discipline has approved it',
+      });
+    }
+
+    // The respondent / the third party have to be on the complaint to be called
+    // for the document.
+    if (requestedFrom.includes('respondent') && !String(compRow[0].ResEmailID || '').trim()) {
+      return res.status(400).json({ error: 'There is no respondent on this complaint' });
+    }
+    if (requestedFrom.includes('thirdparty')) {
+      const members = await query('SELECT COUNT(*) AS cnt FROM tbl_AnswerableMember WHERE CompID=@id', { id: compId });
+      if (!Number(members[0].cnt)) {
+        return res.status(400).json({
+          error: 'There is no third party / answerable member on this complaint',
+        });
+      }
+    }
+
+    await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=51 WHERE CompID=@id', { id: compId });
+    await executeNonQuery(
+      `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment, CommonField)
+       VALUES (@id, 51, @userId, NULL, GETDATE(), @remarks, @attachment, @commonField)`,
+      {
+        id: compId,
+        userId,
+        remarks: String(remarks).trim(),
+        attachment,
+        commonField: `ADReq=${requestedFrom.join(';')}`,
+      }
+    );
+
+    res.json({
+      message: 'Query for the additional document sent.',
+      requestedFrom,
+    });
+  } catch (e) {
+    console.error('additional-document-request error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
  * POST /api/complaints/:id/additional-document
- * The Complainant's reply to the SO's "Additional Document" query (Status 51).
- * Mirrors ViewDetailedComplaint.aspx flow: the SO calls for an additional document
- * (status 56 -> 51). The Complainant uploads it here (recorded at Status 52) and
- * the case is routed back to the SO who called for it (Status 59 - Assigned to SO
- * After Additional Documents), where the SO assigns an officer to draft the PER.
+ * The reply to the SO's "Additional Document" query (Status 51). The document
+ * may have been called for from the Complainant, the Respondent and/or the Third
+ * Party (answerable members); each of them furnishes it here and the case moves
+ * on only when every party it was called for from has submitted.
  * Body: { remarks, attachment }
  */
 router.post('/:id/additional-document', async (req, res) => {
@@ -1302,13 +1590,35 @@ router.post('/:id/additional-document', async (req, res) => {
       return res.status(400).json({ error: 'Please upload the additional document' });
     }
 
-    const compRow = await query('SELECT StatusID, UserID FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
+    const compRow = await query(
+      'SELECT CompID, CompNo, StatusID, UserID, ResEmailID FROM tbl_NewComplaint WHERE CompID=@id',
+      { id: compId }
+    );
     if (compRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
-    if (Number(compRow[0].UserID) !== userId) {
-      return res.status(403).json({ error: 'Only the complainant can submit the additional document' });
-    }
     if (Number(compRow[0].StatusID) !== 51) {
       return res.status(409).json({ error: 'Additional document can be submitted only after the SO calls for it' });
+    }
+
+    // Which party of the complaint is submitting?
+    const answerable = await query('SELECT * FROM tbl_AnswerableMember WHERE CompID=@id', { id: compId });
+    const role = resolvePartyRole(req.user, compRow[0], answerable);
+    if (!role) {
+      return res.status(403).json({ error: 'Only a party to this complaint can submit the additional document' });
+    }
+
+    const history = await query(
+      `SELECT cs.*, sm.StatusName, u.NameOfTheUser AS ByUserName, u.UserType AS ByUserType,
+              u.Email AS ByUserEmail
+       FROM tbl_ComplaintStatus cs
+       INNER JOIN tbl_StatusMaster sm ON cs.StatusID = sm.StatusID
+       LEFT JOIN tbl_Users u ON cs.UserID = u.UserID
+       WHERE cs.CompaintID=@id ORDER BY cs.StatusDate DESC`,
+      { id: compId }
+    );
+    const state = buildAdRequestState(history, answerable);
+    const requestedFrom = state ? state.RequestedFrom : ['complainant'];
+    if (!requestedFrom.includes(role)) {
+      return res.status(403).json({ error: 'The additional document has not been called for from you' });
     }
 
     // Guard: never re-insert when the case is already parked at Status 59.
@@ -1320,6 +1630,11 @@ router.post('/:id/additional-document', async (req, res) => {
       return res.status(409).json({ error: 'Additional document already submitted' });
     }
 
+    // The same party must not furnish the document twice.
+    if (viewerHasSubmitted(history, role, req.user, state ? state.RequestCompStatusID : 0)) {
+      return res.status(409).json({ error: 'Additional document already submitted' });
+    }
+
     // Route back to the SO who called for the additional document (status 51's UserID).
     const soRow = await query(
       'SELECT TOP 1 UserID FROM tbl_ComplaintStatus WHERE CompaintID=@id AND StatusID=51 ORDER BY CompStatusID DESC',
@@ -1327,18 +1642,47 @@ router.post('/:id/additional-document', async (req, res) => {
     );
     const userToId = soRow.length ? soRow[0].UserID : null;
 
-    await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=59 WHERE CompID=@id', { id: compId });
+    // The status the submission is recorded at depends on the party that has
+    // furnished it.
+    const submitStatusId = role === 'complainant' ? 52 : role === 'respondent' ? 131 : 132;
+
     await executeNonQuery(
-      `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment)
-       VALUES (@id, 52, @userId, @userToId, GETDATE(), @remarks, @attachment)`,
+      `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment, CommonField)
+       VALUES (@id, @s, @userId, @userToId, GETDATE(), @remarks, @attachment, @commonField)`,
       {
         id: compId,
+        s: submitStatusId,
         userId,
         userToId: userToId || null,
         remarks: String(remarks).trim(),
         attachment,
+        commonField: `ADSub=${role}`,
       }
     );
+
+    // The case moves on only when every party the document was called for from
+    // has furnished it.
+    const afterHistory = await query(
+      `SELECT cs.*, sm.StatusName, u.NameOfTheUser AS ByUserName, u.UserType AS ByUserType,
+              u.Email AS ByUserEmail
+       FROM tbl_ComplaintStatus cs
+       INNER JOIN tbl_StatusMaster sm ON cs.StatusID = sm.StatusID
+       LEFT JOIN tbl_Users u ON cs.UserID = u.UserID
+       WHERE cs.CompaintID=@id ORDER BY cs.StatusDate DESC`,
+      { id: compId }
+    );
+    const afterState = buildAdRequestState(afterHistory, answerable);
+    const pending = afterState ? afterState.Pending : [];
+
+    if (pending.length) {
+      return res.json({
+        message: 'Additional document submitted. The case awaits the document from the remaining party/parties.',
+        pending: true,
+        pendingFrom: pending,
+      });
+    }
+
+    await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=59 WHERE CompID=@id', { id: compId });
     await executeNonQuery(
       `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment)
        VALUES (@id, 59, @userId, @userToId, GETDATE(), @remarks, @attachment)`,
@@ -1692,9 +2036,52 @@ router.post('/:id/status', async (req, res) => {
 
     // Rule 5(4): link / unlink the previous complaint the Director is acting on.
     if (clubbedWithCompId !== undefined) {
+      const linkId = clubbedWithCompId === null || clubbedWithCompId === '' ? null : Number(clubbedWithCompId);
+      if (linkId !== null) {
+        // A complaint that is already clubbed or closed cannot take a new
+        // complaint on board - the new complaint has to be dealt with on its
+        // own merits.
+        if (linkId === Number(id)) {
+          return res.status(400).json({ error: 'A complaint cannot be clubbed with itself' });
+        }
+        const self = await query('SELECT CompNo, StatusID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@id', { id });
+        if (!self.length) {
+          return res.status(404).json({ error: 'Complaint not found' });
+        }
+        const selfLinked = self[0].ClubbedWithCompID ? Number(self[0].ClubbedWithCompID) : null;
+        if (selfLinked && selfLinked !== linkId) {
+          return res.status(400).json({
+            error: `Complaint ${self[0].CompNo || id} is already clubbed with another complaint. A new complaint cannot be clubbed with it.`,
+          });
+        }
+        if (!selfLinked && CLUBBED_OR_CLOSED_STATUSES.includes(Number(self[0].StatusID))) {
+          return res.status(400).json({
+            error: `Complaint ${self[0].CompNo || id} is already clubbed/closed. A new complaint cannot be clubbed with it.`,
+          });
+        }
+        const target = await query('SELECT CompNo, StatusID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@t', { t: linkId });
+        if (!target.length) {
+          return res.status(400).json({ error: 'The previous complaint could not be found' });
+        }
+        if (target[0].ClubbedWithCompID) {
+          return res.status(400).json({
+            error: `Complaint ${target[0].CompNo} is already clubbed with another complaint. A new complaint cannot be clubbed with it.`,
+          });
+        }
+        // Rule 5(4)(c) - orders have already been passed on the previous
+        // complaint, so the new complaint is taken up for closure before the
+        // Board of Discipline. Every other case needs a complaint that is
+        // still open.
+        const isClosure = String(clubRule || '').toLowerCase() === 'c';
+        if (!isClosure && CLUBBED_OR_CLOSED_STATUSES.includes(Number(target[0].StatusID))) {
+          return res.status(400).json({
+            error: `Complaint ${target[0].CompNo} is already clubbed/closed. A new complaint cannot be clubbed with it.`,
+          });
+        }
+      }
       await executeNonQuery(
         'UPDATE tbl_NewComplaint SET ClubbedWithCompID=@c, ClubRule=@r WHERE CompID=@id',
-        { c: clubbedWithCompId === null || clubbedWithCompId === '' ? null : Number(clubbedWithCompId), r: clubRule || null, id }
+        { c: linkId, r: clubRule || null, id }
       );
     }
     const ext = extensionTime != null && extensionTime !== '' ? Number(extensionTime) : null;
@@ -2074,6 +2461,34 @@ router.post('/', async (req, res) => {
     res.status(201).json({ CompID: compId, CompNo: compNo });
   } catch (e) {
     console.error('create complaint error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+/**
+ * GET /api/complaints/:id/clubbed-list
+ * All complaints clubbed with this complaint (where ClubbedWithCompID = :id)
+ */
+router.get('/:id/clubbed-list', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const rows = await query(
+      `SELECT nc.CompID, nc.CompNo, nc.Name AS ComplainantName, nc.ResName, nc.ResEmailID,
+              nc.StatusID, sm.StatusName, nc.EntryDate, nc.ClubRule, nc.UserID,
+              nc.ClubbedWithCompID, pc.CompNo AS PreviousCompNo,
+              pc.StatusID AS PreviousStatusID, pcs.StatusName AS PreviousStatusName
+       FROM tbl_NewComplaint nc
+       LEFT JOIN tbl_StatusMaster sm ON nc.StatusID = sm.StatusID
+       LEFT JOIN tbl_NewComplaint pc ON nc.ClubbedWithCompID = pc.CompID
+       LEFT JOIN tbl_StatusMaster pcs ON pc.StatusID = pcs.StatusID
+       WHERE nc.ClubbedWithCompID = @id AND (nc.IsTemp IS NULL OR nc.IsTemp=0)
+       ORDER BY nc.EntryDate ASC`,
+      { id }
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('clubbed list error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
