@@ -261,36 +261,46 @@ export default function FileComplaint() {
         setSchedules(sc.data);
 
         const ct = await api.get(`/masters/2?option1=${isGovEmp ? 1 : 0}`);
-        setCompTypes(ct.data);
+        const ctData = ct.data || [];
+        setCompTypes(ctData);
+        setForm((prev) => {
+          if (prev.compTypeId) return prev;
+          if (user?.CompType) return { ...prev, compTypeId: String(user.CompType) };
+          if (ctData.length === 1) return { ...prev, compTypeId: String(ctData[0].value) };
+          return prev;
+        });
       } catch (_) {}
     };
     load();
-  }, [isGovEmp]);
+  }, [isGovEmp, user]);
 
   useEffect(() => {
     if (user && !isDD) {
-      setForm((f) => ({
-        ...f,
-        name: user.NameOfTheUser || '',
-        email: user.Email || '',
-        mobile: user.Mob || '',
-        countryCode: user.CountryCode || '91',
-        aadharNo: user.AadharNo || '',
-        address: user.Address || '',
-        area: user.Area || '',
-        landmark: user.Landmark || '',
-        stateId: user.StateID || '',
-        cityId: user.CityID || '',
-        pincode: user.Pincode != null ? String(user.Pincode).trim().replace(/\.0+$/, '') : '',
-        stdCode: user.STDCode || '',
-        landlineNo: user.LandlineNo || '',
-        aadharPhoto: user.AadharPhoto || '',
-        complaintantPhoto: user.ComplaintantPhoto || '',
-        complaintantSignature: user.ComplaintantSignature || '',
-        regulatorName: user.NameOfOffice || '',
-        regulatorDesignation: user.RegulatorDesignation || '',
-        complainantRegion: user.Region || '',
-      }));
+      setForm((f) => {
+        const stateObj = states.find((s) => String(s.value) === String(user.StateID));
+        return {
+          ...f,
+          name: user.NameOfTheUser || '',
+          email: user.Email || '',
+          mobile: user.Mob || '',
+          countryCode: user.CountryCode || '91',
+          aadharNo: user.AadharNo || '',
+          address: user.Address || '',
+          area: user.Area || '',
+          landmark: user.Landmark || '',
+          stateId: user.StateID || '',
+          cityId: user.CityID || '',
+          pincode: user.Pincode != null ? String(user.Pincode).trim().replace(/\.0+$/, '') : '',
+          stdCode: user.STDCode || '',
+          landlineNo: user.LandlineNo || '',
+          aadharPhoto: user.AadharPhoto || '',
+          complaintantPhoto: user.ComplaintantPhoto || '',
+          complaintantSignature: user.ComplaintantSignature || '',
+          regulatorName: user.NameOfOffice || '',
+          regulatorDesignation: user.RegulatorDesignation || '',
+          complainantRegion: user.Region || stateObj?.Region || stateObj?.region || f.complainantRegion || '',
+        };
+      });
       if (user.StateID) {
         api.get(`/masters/7?option1=${user.StateID}`).then((r) => setCities(r.data)).catch(() => {});
       }
@@ -379,7 +389,7 @@ export default function FileComplaint() {
           aadharPhoto: d.AadharPhoto || '',
           complaintantPhoto: d.ComplaintantPhoto || '',
           complaintantSignature: d.ComplaintantSignature || '',
-          complainantRegion: d.Region || '',
+          complainantRegion: d.Region || states.find((s) => String(s.value) === String(d.StateID))?.Region || states.find((s) => String(s.value) === String(d.StateID))?.region || '',
           salutation: d.Salutation || '',
           relationName: d.RelationName || '',
           isFirm: Number(d.IsFirm) === 1,
@@ -495,24 +505,24 @@ export default function FileComplaint() {
 
   const onStateChange = (e) => {
     const v = e.target.value;
-    const st = states.find((s) => String(s.value) === v);
-    setForm({ ...form, stateId: v, cityId: '', complainantRegion: st?.Region || '' });
+    const st = states.find((s) => String(s.value) === String(v));
+    setForm({ ...form, stateId: v, cityId: '', complainantRegion: st?.Region || st?.region || '' });
     loadCities(v, setCities);
   };
 
   // Communication State -> sets resStateId/resCityId and auto Communication Region
   const onCommStateChange = (e) => {
     const v = e.target.value;
-    const st = commStates.find((s) => String(s.value) === v);
-    setForm({ ...form, resStateId: v, resCityId: '', resComRegion: st?.Region || '' });
+    const st = commStates.find((s) => String(s.value) === String(v));
+    setForm({ ...form, resStateId: v, resCityId: '', resComRegion: st?.Region || st?.region || '' });
     loadCities(v, setCommCities);
   };
 
   // Firm Professional State -> firmProfStateId / firmProfCityId and auto Professional Region
   const onProfStateChange = (e) => {
     const v = e.target.value;
-    const st = profStates.find((s) => String(s.value) === v);
-    setForm({ ...form, firmProfStateId: v, firmProfCityId: '', resRegion: st?.Region || '' });
+    const st = profStates.find((s) => String(s.value) === String(v));
+    setForm({ ...form, firmProfStateId: v, firmProfCityId: '', resRegion: st?.Region || st?.region || '' });
     loadCities(v, setProfCities);
   };
 
@@ -954,7 +964,7 @@ export default function FileComplaint() {
           <div className="row g-3">
             <div className="col-md-4">
               <label className="form-label">Type of Complaint *</label>
-              <select className="form-select" value={form.compTypeId} onChange={onCompTypeChange}>
+              <select className="form-select" value={form.compTypeId} onChange={onCompTypeChange} disabled={isEdit || !!form.compTypeId && !isDD}>
                 <option value="">--Select--</option>
                 {compTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
@@ -985,10 +995,6 @@ export default function FileComplaint() {
               <label className="form-label">Landline No</label>
               <input className="form-control" maxLength={8} value={form.landlineNo} onChange={set('landlineNo')} inputMode="numeric" />
             </div>
-            <div className="col-md-2">
-              <label className="form-label">Region *</label>
-              <input className="form-control" value={form.complainantRegion || ''} readOnly />
-            </div>
             <div className="col-md-6">
               <label className="form-label">Flat, House no., Building, Company, Apartment *</label>
               <input className="form-control" value={form.address} onChange={set('address')} />
@@ -1018,6 +1024,10 @@ export default function FileComplaint() {
             <div className="col-md-2">
               <label className="form-label">Pincode *</label>
               <input className="form-control" maxLength={6} value={form.pincode} onChange={set('pincode')} inputMode="numeric" />
+            </div>
+            <div className="col-md-2">
+              <label className="form-label">Region *</label>
+              <input className="form-control" value={form.complainantRegion || ''} readOnly />
             </div>
             <div className="col-md-4">
               <label className="form-label">PAN No. *</label>
@@ -1251,6 +1261,7 @@ export default function FileComplaint() {
               </div>
               <div className="row g-3 mb-3">
                 <div className="col-md-3"><label className="form-label">Name</label><input className="form-control" value={memName} onChange={(e) => setMemName(e.target.value)} /></div>
+                <div className="col-md-2"><label className="form-label">Country Code</label><select className="form-select" value={memCountryCode} onChange={(e) => setMemCountryCode(e.target.value)}>{CCODES.map((c)=><option key={c} value={c}>+{c}</option>)}</select></div>
                 <div className="col-md-2"><label className="form-label">Mobile No</label><input className="form-control" maxLength={String(memCountryCode) === '91' ? 10 : 15} inputMode="numeric" value={memMobile} onChange={(e) => setMemMobile(sanitizeDigits(e.target.value, 15))} /></div>
                 <div className="col-md-3"><label className="form-label">Email ID</label><input className="form-control" maxLength={100} value={memEmail} onChange={(e) => setMemEmail(e.target.value.trim())} /></div>
                 <div className="col-md-2">
@@ -1259,8 +1270,11 @@ export default function FileComplaint() {
                     setMemCommStateId(e.target.value);
                     if (e.target.value) {
                       const r = await api.get(`/masters/7?option1=${e.target.value}`);
-                      setMemCommCities(r.data);
+                      setMemCommCities(r.data || []);
+                    } else {
+                      setMemCommCities([]);
                     }
+                    setMemCommCityId('');
                   }}>
                     <option value="">--Select--</option>
                     {memCommStates.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -1273,6 +1287,10 @@ export default function FileComplaint() {
                     {memCommCities.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </div>
+              </div>
+              <div className="row g-3 mb-3">
+                <div className="col-md-3"><label className="form-label">Address</label><input className="form-control" value={memProAddress} onChange={(e)=>setMemProAddress(e.target.value)} /></div>
+                <div className="col-md-3"><label className="form-label">Comm Address</label><input className="form-control" value={memCommAddress} onChange={(e)=>setMemCommAddress(e.target.value)} /></div>
               </div>
               <button className="btn btn-success btn-sm mb-3" onClick={onAnswerableAdd} type="button">
                 <i className="bi bi-plus-circle me-1"></i>Save
@@ -1414,6 +1432,19 @@ export default function FileComplaint() {
         </div>
       </div>
 
+      {/* ===== ENTITY IN RESPECT OF WHICH MISCONDUCT ===== */}
+      <div className="card mb-3">
+        <div className="card-header bg-warning text-dark fw-semibold"><i className="bi bi-building me-2"></i>Entity in respect of which misconduct alleged</div>
+        <div className="card-body">
+          <div className="row g-3">
+            <div className="col-12">
+              <label className="form-label fw-semibold">Entity in respect of which misconduct alleged <span className="text-danger">*</span></label>
+              <input className="form-control" value={form.entityMisconduct} onChange={set('entityMisconduct')} placeholder="Entity in respect of which misconduct alleged." />
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* ===== PAYMENT DETAILS ===== */}
       <div className="card mb-3">
         <div className="card-header bg-success text-white fw-semibold"><i className="bi bi-credit-card me-2"></i>Payment Details</div>
@@ -1470,19 +1501,14 @@ export default function FileComplaint() {
               </div>
             </div>
           )}
-          <div className="row g-3 mt-3">
-            <div className="col-12">
-              <label className="form-label fw-semibold">Entity in respect of which misconduct alleged*</label>
-              <input className="form-control" value={form.entityMisconduct} onChange={set('entityMisconduct')} placeholder="Entity in respect of which misconduct alleged." />
-            </div>
-          </div>
         </div>
       </div>
 
       {/* ===== DOCUMENT / EVIDENCE ===== */}
       <div className="card mb-3">
-        <div className="card-header bg-dark text-white fw-semibold"><i className="bi bi-paperclip me-2"></i>Document/Evidence</div>
+        <div className="card-header bg-dark text-white fw-semibold"><i className="bi bi-paperclip me-2"></i>Document and Attachment</div>
         <div className="card-body">
+          <h6 className="text-primary mb-3">Document/Evidence</h6>
           <div className="row g-3 mb-2">
             <div className="col-md-4">
               <label className="form-label">Document/Evidence Name</label>
@@ -1492,7 +1518,21 @@ export default function FileComplaint() {
               <FileUploadInput label="Attach Document" hint={DOC_HINT} accept=".pdf" sizeMB={15} onUpload={onDocAdd} />
             </div>
           </div>
-          <div className="row g-3 mt-2">
+          {docs.length > 0 && (
+            <table className="table table-sm table-bordered">
+              <thead><tr><th>Document/Evidence Name</th><th>File</th><th>Action</th></tr></thead>
+              <tbody>
+                {docs.map((d, i) => (
+                  <tr key={i}>
+                    <td>{d.documentId}</td><td>{d.fileName}</td>
+                    <td><button className="btn btn-danger btn-sm" onClick={() => setDocs(docs.filter((_, j) => j !== i))} type="button">Delete</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <h6 className="text-primary mb-3 mt-4">Audio/Video Attachment</h6>
+          <div className="row g-3 mt-1">
             <div className="col-md-6">
               <label className="form-label">Do you have Audio/Video Evidence?</label>
               <select className="form-select" value={form.isAudioVideo} onChange={set('isAudioVideo')}>
@@ -1515,19 +1555,6 @@ export default function FileComplaint() {
               </>
             )}
           </div>
-          {docs.length > 0 && (
-            <table className="table table-sm table-bordered mt-3">
-              <thead><tr><th>Document/Evidence Name</th><th>File</th><th>Action</th></tr></thead>
-              <tbody>
-                {docs.map((d, i) => (
-                  <tr key={i}>
-                    <td>{d.documentId}</td><td>{d.fileName}</td>
-                    <td><button className="btn btn-danger btn-sm" onClick={() => setDocs(docs.filter((_, j) => j !== i))} type="button">Delete</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
           {audioFiles.length > 0 && (
             <table className="table table-sm table-bordered mt-2">
               <thead><tr><th>Audio/Video File</th><th>Action</th></tr></thead>

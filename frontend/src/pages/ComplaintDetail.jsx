@@ -2936,21 +2936,35 @@ export default function ComplaintDetail() {
                 <p className="mb-0">No documents uploaded for this complaint.</p>
               </div>
             ) : (
-              <div className="d-flex flex-column gap-2">
-                {c.documents.map((d) => (
-                  <a href={`/documents/${d.DocURL}`} target="_blank" rel="noreferrer" key={d.CompAttachID} className="doc-chip">
-                    <i className={`bi ${fileIcon(d.DocURL)}`} />
-                    <span className="doc-name">{d.DocURL}</span>
-                    <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
-                  </a>
-                ))}
-                {c.audioVideo.map((av) => (
-                  <a href={`/documents/${av.Attachment}`} target="_blank" rel="noreferrer" key={av.AttachID} className="doc-chip">
-                    <i className={`bi ${fileIcon(av.Attachment)}`} />
-                    <span className="doc-name">{av.Attachment}</span>
-                    <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
-                  </a>
-                ))}
+              <div className="d-flex flex-column gap-3">
+                {c.documents?.length > 0 && (
+                  <div>
+                    <h6 className="text-primary mb-2">Document/Evidence</h6>
+                    <div className="d-flex flex-column gap-2">
+                      {c.documents.map((d) => (
+                        <a href={`/documents/${d.DocURL}`} target="_blank" rel="noreferrer" key={d.CompAttachID} className="doc-chip">
+                          <i className={`bi ${fileIcon(d.DocURL)}`} />
+                          <span className="doc-name">{d.DocURL}</span>
+                          <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {c.audioVideo?.length > 0 && (
+                  <div>
+                    <h6 className="text-primary mb-2">Audio/Video Attachment</h6>
+                    <div className="d-flex flex-column gap-2">
+                      {c.audioVideo.map((av) => (
+                        <a href={`/documents/${av.Attachment}`} target="_blank" rel="noreferrer" key={av.AttachID} className="doc-chip">
+                          <i className={`bi ${fileIcon(av.Attachment)}`} />
+                          <span className="doc-name">{av.Attachment}</span>
+                          <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Documents attached by the internal users. They are visible to
                     the internal staff only - the complainant, the respondent and

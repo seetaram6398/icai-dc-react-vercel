@@ -66,6 +66,17 @@ export default function Register() {
     if (token && user) navigate('/dashboard', { replace: true });
   }, [token, user]);
 
+  useEffect(() => {
+    const shown = sessionStorage.getItem('reg_info_shown');
+    if (!shown) {
+      setTimeout(() => {
+        popup.info('Please fill all the details carefully before creating an account.');
+      }, 300);
+      sessionStorage.setItem('reg_info_shown', '1');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [tab, setTab] = useState('member');
   const [step, setStep] = useState(1);
   const [otp, setOtp] = useState('');
@@ -338,7 +349,7 @@ export default function Register() {
   const setState = async (e) => {
     const v = e.target.value;
     const st = states.find((s) => String(s.value) === String(v));
-    setNon({ ...non, stateId: v, cityId: '', region: st?.region || '' });
+    setNon({ ...non, stateId: v, cityId: '', region: st?.region || st?.Region || '' });
     if (v) {
       const r = await api.get(`/masters/7?option1=${v}`);
       setCities(r.data || []);
@@ -576,6 +587,7 @@ export default function Register() {
                           <div className="reg-field">
                             <label>Designation <span className="reg-required">*</span></label>
                             <input className="reg-input" value={non.designation} onChange={setNonF('designation')} maxLength={50} required />
+                            <small className="reg-hint">Not below the rank of under secretary or equivalent</small>
                           </div>
                           <div className="reg-field">
                             <label>Country Code <span className="reg-required">*</span></label>
@@ -615,7 +627,10 @@ export default function Register() {
                           </div>
                           <div className="reg-field">
                             <label>City <span className="reg-required">*</span></label>
-                            <select className="reg-input" value={non.cityId} onChange={setNonF('cityId')} disabled={!non.stateId}>
+                            <select className="reg-input" value={non.cityId} onChange={(e) => {
+                              const cityId = e.target.value;
+                              setNon((prev) => ({ ...prev, cityId }));
+                            }} disabled={!non.stateId}>
                               <option value="">--Select--</option>
                               {cities.map((ct) => (
                                 <option key={ct.value} value={ct.value}>{ct.label}</option>
