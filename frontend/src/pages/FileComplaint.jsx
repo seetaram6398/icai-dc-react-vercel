@@ -10,6 +10,7 @@ import {
   sanitizeAlphaNumUpper, sanitizeUpper, isValidName, isValidFirmName,
   isFutureDate, isDateRangeOk,
 } from '../utils/validators';
+import { regionForState } from '../utils/region';
 import './Reports.css';
 
 const CCODES = ['91', '1', '44', '61', '971', '966', '65', '977', '880', '94', '92'];
@@ -298,7 +299,7 @@ export default function FileComplaint() {
           complaintantSignature: user.ComplaintantSignature || '',
           regulatorName: user.NameOfOffice || '',
           regulatorDesignation: user.RegulatorDesignation || '',
-          complainantRegion: user.Region || stateObj?.Region || stateObj?.region || f.complainantRegion || '',
+          complainantRegion: regionForState(stateObj?.label, user.Region || stateObj?.Region || stateObj?.region || f.complainantRegion),
         };
       });
       if (user.StateID) {
@@ -369,6 +370,11 @@ export default function FileComplaint() {
       try {
         const { data: d } = await api.get(`/complaints/${editId}`);
         if (cancelled) return;
+        const stateObj = states.find((s) => String(s.value) === String(d.StateID));
+        const resStateObj = states.find((s) => String(s.value) === String(d.RStateID));
+        const profStateObj = states.find(
+          (s) => String(s.value) === String(Number(d.IsFirm) === 1 ? d.FirmProfStateID : d.RStateID)
+        );
         setForm({
           ...form,
           formType: d.FormType || 'A',
@@ -389,7 +395,7 @@ export default function FileComplaint() {
           aadharPhoto: d.AadharPhoto || '',
           complaintantPhoto: d.ComplaintantPhoto || '',
           complaintantSignature: d.ComplaintantSignature || '',
-          complainantRegion: d.Region || states.find((s) => String(s.value) === String(d.StateID))?.Region || states.find((s) => String(s.value) === String(d.StateID))?.region || '',
+          complainantRegion: regionForState(stateObj?.label, d.Region || stateObj?.Region || stateObj?.region),
           salutation: d.Salutation || '',
           relationName: d.RelationName || '',
           isFirm: Number(d.IsFirm) === 1,
@@ -415,8 +421,8 @@ export default function FileComplaint() {
           resCityName: d.RCityName || d.RCityname || '',
           resRStateName: d.RStateName || '',
           resRCityName: d.RCityName || d.RCityname || '',
-          resRegion: d.RRegion || '',
-          resComRegion: d.RComRegion || '',
+          resRegion: regionForState(profStateObj?.label || d.RStateName, d.RRegion),
+          resComRegion: regionForState(resStateObj?.label || d.RStateName, d.RComRegion),
           regulatorName: d.RegulatorName || '',
           regulatorDesignation: d.RegulatorDesignation || '',
           regulatorId: d.RegulatorID != null ? String(d.RegulatorID) : '',
@@ -506,7 +512,7 @@ export default function FileComplaint() {
   const onStateChange = (e) => {
     const v = e.target.value;
     const st = states.find((s) => String(s.value) === String(v));
-    setForm({ ...form, stateId: v, cityId: '', complainantRegion: st?.Region || st?.region || '' });
+    setForm({ ...form, stateId: v, cityId: '', complainantRegion: regionForState(st?.label, st?.Region || st?.region) });
     loadCities(v, setCities);
   };
 
@@ -514,7 +520,7 @@ export default function FileComplaint() {
   const onCommStateChange = (e) => {
     const v = e.target.value;
     const st = commStates.find((s) => String(s.value) === String(v));
-    setForm({ ...form, resStateId: v, resCityId: '', resComRegion: st?.Region || st?.region || '' });
+    setForm({ ...form, resStateId: v, resCityId: '', resComRegion: regionForState(st?.label, st?.Region || st?.region) });
     loadCities(v, setCommCities);
   };
 
@@ -522,7 +528,7 @@ export default function FileComplaint() {
   const onProfStateChange = (e) => {
     const v = e.target.value;
     const st = profStates.find((s) => String(s.value) === String(v));
-    setForm({ ...form, firmProfStateId: v, firmProfCityId: '', resRegion: st?.Region || st?.region || '' });
+    setForm({ ...form, firmProfStateId: v, firmProfCityId: '', resRegion: regionForState(st?.label, st?.Region || st?.region) });
     loadCities(v, setProfCities);
   };
 
@@ -602,7 +608,7 @@ export default function FileComplaint() {
           resProfessionalAddress: data.professionalAddress || '',
           resRStateName: data.professionalState || '',
           resRCityName: data.city || '',
-          resRegion: st?.Region || '',
+          resRegion: regionForState(st?.label, st?.Region), 
         }));
         loadCaptcha();
       } catch (ex) {
@@ -625,12 +631,14 @@ export default function FileComplaint() {
       } catch (_) { popup.warning('Invalid CAPTCHA'); loadMemberAnsCaptcha(); return; }
       try {
         const { data } = await api.post('/auth/member-lookup', { membershipNo: memRegNo });
+        const st = memCommStates.find((s) => s.label?.toLowerCase() === (data.professionalState || '').toLowerCase());
         setMemName(data.name || '');
         setMemMobile(data.mobile || '');
         setMemEmail(data.email || '');
         setMemProAddress(data.professionalAddress || '');
         setMemProState(data.professionalState || '');
         setMemProCity(data.city || '');
+        setMemProRegion(regionForState(st?.label || data.professionalState, st?.Region));
         loadMemberAnsCaptcha();
       } catch (ex) {
         popup.error(ex.response?.data?.error || 'Member not found');
@@ -734,17 +742,28 @@ export default function FileComplaint() {
     }
     if (memEmail && !isValidEmail(memEmail)) { popup.warning('Please enter valid email ID'); return; }
     if (memName && !isValidName(memName)) { popup.warning('Please enter a valid Name (letters only)'); return; }
+    if (!memProAddress.trim()) { popup.warning('Please enter Professional Address'); return; }
+    if (!memCommAddress.trim()) { popup.warning('Please enter Communication Address'); return; }
+    if (!memProState.trim()) { popup.warning('Please get the member details to fetch Professional State'); return; }
+    if (!memProCity.trim()) { popup.warning('Please get the member details to fetch Professional City'); return; }
+    if (!memCommStateId) { popup.warning('Please select Communication State'); return; }
+    if (!memCommCityId) { popup.warning('Please select Communication City'); return; }
+    const proRegion = regionForState(memProState, memProRegion);
+    if (!proRegion) { popup.warning('Professional Region could not be determined.'); return; }
+    const commStateObj = memCommStates.find((s) => String(s.value) === String(memCommStateId));
+    const commRegion = regionForState(commStateObj?.label, memCommRegion);
+    if (!commRegion) { popup.warning('Communication Region could not be determined.'); return; }
     if (form.resRegistrationNo === memRegNo) { popup.warning('Respondent and Answerable member cannot be same'); return; }
     if (answerableMembers.find((m) => m.memRegistrationNo === memRegNo)) { popup.warning('Already added Answerable member'); return; }
     setAnswerableMembers([...answerableMembers, {
       memName, memRegistrationNo: memRegNo, memCountryCode, memMobileNo: memMobile,
       memSTDCode: memStdCode, memLandlineNo: memLandline, memEmailID: memEmail,
       memProAddress, memCommAddress, memProState, memProCity,
-      memCommStateId, memCommCityId, memProRegion, memCommRegion, firmNo: form.firmNo,
+      memCommStateId, memCommCityId, memProRegion: proRegion, memCommRegion: commRegion, firmNo: form.firmNo,
     }]);
     setMemName(''); setMemRegNo(''); setMemMobile(''); setMemStdCode(''); setMemLandline('');
     setMemEmail(''); setMemProAddress(''); setMemCommAddress(''); setMemProState('');
-    setMemCommStateId(''); setMemCommCityId(''); setMemProRegion(''); setMemCommRegion('');
+    setMemProCity(''); setMemCommStateId(''); setMemCommCityId(''); setMemProRegion(''); setMemCommRegion('');
     setMemAnsCaptcha(null); setMemAnsCaptchaAnswer('');
   };
 
@@ -1263,13 +1282,40 @@ export default function FileComplaint() {
                 <div className="col-md-3"><label className="form-label">Name</label><input className="form-control" value={memName} onChange={(e) => setMemName(e.target.value)} /></div>
                 <div className="col-md-2"><label className="form-label">Country Code</label><select className="form-select" value={memCountryCode} onChange={(e) => setMemCountryCode(e.target.value)}>{CCODES.map((c)=><option key={c} value={c}>+{c}</option>)}</select></div>
                 <div className="col-md-2"><label className="form-label">Mobile No</label><input className="form-control" maxLength={String(memCountryCode) === '91' ? 10 : 15} inputMode="numeric" value={memMobile} onChange={(e) => setMemMobile(sanitizeDigits(e.target.value, 15))} /></div>
-                <div className="col-md-3"><label className="form-label">Email ID</label><input className="form-control" maxLength={100} value={memEmail} onChange={(e) => setMemEmail(e.target.value.trim())} /></div>
+                <div className="col-md-5"><label className="form-label">Email ID</label><input className="form-control" maxLength={100} value={memEmail} onChange={(e) => setMemEmail(e.target.value.trim())} /></div>
+              </div>
+              <div className="row g-3 mb-3">
+                <div className="col-md-6">
+                  <label className="form-label">Professional Address <span className="text-danger">*</span></label>
+                  <input className="form-control" value={memProAddress} onChange={(e)=>setMemProAddress(e.target.value)} />
+                </div>
                 <div className="col-md-2">
-                  <label className="form-label">Comm State</label>
+                  <label className="form-label">Professional State <span className="text-danger">*</span></label>
+                  <input className="form-control" value={memProState} readOnly />
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label">Professional City <span className="text-danger">*</span></label>
+                  <input className="form-control" value={memProCity} readOnly />
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label">Professional Region <span className="text-danger">*</span></label>
+                  <input className="form-control" value={memProRegion} readOnly />
+                </div>
+              </div>
+              <div className="row g-3 mb-3">
+                <div className="col-md-6">
+                  <label className="form-label">Communication Address <span className="text-danger">*</span></label>
+                  <input className="form-control" value={memCommAddress} onChange={(e)=>setMemCommAddress(e.target.value)} />
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label">Communication State <span className="text-danger">*</span></label>
                   <select className="form-select" value={memCommStateId} onChange={async (e) => {
-                    setMemCommStateId(e.target.value);
-                    if (e.target.value) {
-                      const r = await api.get(`/masters/7?option1=${e.target.value}`);
+                    const v = e.target.value;
+                    const st = memCommStates.find((s) => String(s.value) === String(v));
+                    setMemCommStateId(v);
+                    setMemCommRegion(regionForState(st?.label, st?.Region));
+                    if (v) {
+                      const r = await api.get(`/masters/7?option1=${v}`);
                       setMemCommCities(r.data || []);
                     } else {
                       setMemCommCities([]);
@@ -1281,16 +1327,16 @@ export default function FileComplaint() {
                   </select>
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">Comm City</label>
+                  <label className="form-label">Communication City <span className="text-danger">*</span></label>
                   <select className="form-select" value={memCommCityId} onChange={(e) => setMemCommCityId(e.target.value)} disabled={!memCommStateId}>
                     <option value="">--Select--</option>
                     {memCommCities.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </div>
-              </div>
-              <div className="row g-3 mb-3">
-                <div className="col-md-3"><label className="form-label">Address</label><input className="form-control" value={memProAddress} onChange={(e)=>setMemProAddress(e.target.value)} /></div>
-                <div className="col-md-3"><label className="form-label">Comm Address</label><input className="form-control" value={memCommAddress} onChange={(e)=>setMemCommAddress(e.target.value)} /></div>
+                <div className="col-md-2">
+                  <label className="form-label">Communication Region <span className="text-danger">*</span></label>
+                  <input className="form-control" value={memCommRegion} readOnly />
+                </div>
               </div>
               <button className="btn btn-success btn-sm mb-3" onClick={onAnswerableAdd} type="button">
                 <i className="bi bi-plus-circle me-1"></i>Save

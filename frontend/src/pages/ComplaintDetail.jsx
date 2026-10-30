@@ -14,6 +14,7 @@ import {
   hasPrimaFacie, canWithdraw, rule6ReturnStatus, deriveRule54,
   rule54ClauseFor, rule54TextFor,
 } from '../utils/rule54';
+import { regionForState } from '../utils/region';
 
 function badgeTone(name) {
   const n = (name || '').toLowerCase();
@@ -655,7 +656,7 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
               s.label.includes(String(rec.professionalState).trim().toUpperCase())
           )) ||
         null;
-      const region = st?.Region || '';
+      const region = regionForState(st?.label, st?.Region);
       patchMember({
         memRegistrationNo: lookupNo.trim(),
         memName: rec.name || '',
@@ -690,12 +691,36 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
       popup.warning('Please enter a valid Answerable Membership No.');
       return;
     }
+    if (!member.memProAddress.trim()) {
+      popup.warning('Please enter Professional Address.');
+      return;
+    }
+    if (!member.memCommAddress.trim()) {
+      popup.warning('Please enter Communication Address.');
+      return;
+    }
+    if (!String(member.memProState).trim()) {
+      popup.warning('Professional State is required. Please get the member details.');
+      return;
+    }
+    if (!String(member.memProCity).trim()) {
+      popup.warning('Professional City is required. Please get the member details.');
+      return;
+    }
+    if (!member.memProRegion) {
+      popup.warning('Professional Region is required.');
+      return;
+    }
     if (!member.memCommStateId) {
       popup.warning('Please Select Communication State.');
       return;
     }
     if (!member.memCommCityId) {
       popup.warning('Please Select Communication City.');
+      return;
+    }
+    if (!member.memCommRegion) {
+      popup.warning('Communication Region is required.');
       return;
     }
     setAnsBusy(true);
@@ -956,16 +981,20 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
                   <input className="form-control" value={member.memLandlineNo} maxLength={10} onChange={(e) => patchMember({ memLandlineNo: e.target.value.replace(/\D/g, '') })} />
                 </div>
                 <div className="mb-2">
-                  <label className="form-label small fw-semibold">Professional Address</label>
-                  <input className="form-control" value={member.memProAddress} onChange={(e) => patchMember({ memProAddress: e.target.value })} />
+                  <label className="form-label small fw-semibold">Professional Address <span className="text-danger">*</span></label>
+                  <input className="form-control" value={member.memProAddress} onChange={(e) => patchMember({ memProAddress: e.target.value })} required />
                 </div>
                 <div className="mb-2">
-                  <label className="form-label small fw-semibold">Professional State</label>
-                  <input className="form-control" value={member.memProState} readOnly />
+                  <label className="form-label small fw-semibold">Professional State <span className="text-danger">*</span></label>
+                  <input className="form-control" value={member.memProState} readOnly required />
                 </div>
                 <div className="mb-2">
-                  <label className="form-label small fw-semibold">Professional City</label>
-                  <input className="form-control" value={member.memProCity} readOnly />
+                  <label className="form-label small fw-semibold">Professional City <span className="text-danger">*</span></label>
+                  <input className="form-control" value={member.memProCity} readOnly required />
+                </div>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Professional Region <span className="text-danger">*</span></label>
+                  <input className="form-control" value={member.memProRegion} readOnly required />
                 </div>
                 <div className="row g-2 mb-2">
                   <div className="col-6">
@@ -978,7 +1007,7 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
                         patchMember({
                           memCommStateId: e.target.value,
                           memCommCityId: '',
-                          memCommRegion: st?.Region || member.memCommRegion,
+                          memCommRegion: regionForState(st?.label, st?.Region) || member.memCommRegion,
                         });
                       }}
                       required
@@ -1006,8 +1035,12 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
                   </div>
                 </div>
                 <div className="mb-2">
-                  <label className="form-label small fw-semibold">Communication Address</label>
-                  <input className="form-control" value={member.memCommAddress} onChange={(e) => patchMember({ memCommAddress: e.target.value })} />
+                  <label className="form-label small fw-semibold">Communication Region <span className="text-danger">*</span></label>
+                  <input className="form-control" value={member.memCommRegion} readOnly required />
+                </div>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Communication Address <span className="text-danger">*</span></label>
+                  <input className="form-control" value={member.memCommAddress} onChange={(e) => patchMember({ memCommAddress: e.target.value })} required />
                 </div>
                 <div className="mb-3">
                   <label className="form-label small fw-semibold">Email ID</label>

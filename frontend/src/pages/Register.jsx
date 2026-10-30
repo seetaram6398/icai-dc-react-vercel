@@ -3,10 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import { usePopups } from '../components/Popup';
+import { REGION_OPTIONS as REGIONS, regionForState } from '../utils/region';
 import './Register.css';
 
 const CAPTCHA_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-const REGIONS = ['Eastern', 'Western', 'Northern', 'Southern', 'Central'];
 
 function genCaptchaString() {
   let s = '';
@@ -60,28 +60,20 @@ export default function Register() {
   const { token, user, register, verifyRegistration } = useAuth();
   const navigate = useNavigate();
   const canvasRef = useRef(null);
+  const popup = usePopups();
 
   // Registration is for logged-out users only.
   useEffect(() => {
     if (token && user) navigate('/dashboard', { replace: true });
   }, [token, user]);
 
-  useEffect(() => {
-    const shown = sessionStorage.getItem('reg_info_shown');
-    if (!shown) {
-      setTimeout(() => {
-        popup.info('Please fill all the details carefully before creating an account.');
-      }, 300);
-      sessionStorage.setItem('reg_info_shown', '1');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const [tab, setTab] = useState('member');
   const [step, setStep] = useState(1);
   const [otp, setOtp] = useState('');
   const [busy, setBusy] = useState(false);
-  const popup = usePopups();
+  // Notice shown as soon as the registration page loads, listing the
+  // authorisation requirements for filing a complaint.
+  const [showRules, setShowRules] = useState(true);
 
   // member tab
   const [mem, setMem] = useState({ membershipNo: '', dob: '' });
@@ -349,7 +341,7 @@ export default function Register() {
   const setState = async (e) => {
     const v = e.target.value;
     const st = states.find((s) => String(s.value) === String(v));
-    setNon({ ...non, stateId: v, cityId: '', region: st?.region || st?.Region || '' });
+    setNon({ ...non, stateId: v, cityId: '', region: regionForState(st?.label, st?.Region || st?.region) });
     if (v) {
       const r = await api.get(`/masters/7?option1=${v}`);
       setCities(r.data || []);
@@ -360,6 +352,71 @@ export default function Register() {
 
   return (
     <div className="reg-page">
+      {showRules && (
+        <div className="reg-rules-overlay" role="dialog" aria-modal="true" aria-labelledby="reg-rules-title">
+          <div className="reg-rules-modal">
+            <div className="reg-rules-head">
+              <div className="reg-rules-title" id="reg-rules-title">
+                <i className="bi bi-info-circle-fill" />
+                <span>Important instructions for filing a complaint</span>
+              </div>
+              <button
+                type="button"
+                className="reg-rules-close"
+                onClick={() => setShowRules(false)}
+                aria-label="Close"
+              >
+                <i className="bi bi-x-lg" />
+              </button>
+            </div>
+            <div className="reg-rules-body">
+              <ol>
+                <li>
+                  A complaint filed by or on behalf of the Central Government or any State Government,
+                  shall be authorized by an officer holding a post not below the rank of a Joint Secretary
+                  or equivalent and shall be signed by an officer holding a post not below the rank of an
+                  Under Secretary or equivalent in the Central or State Government, as the case may be.
+                </li>
+                <li>
+                  A complaint filed by or on behalf of any statutory authority, such as Reserve Bank of
+                  India or Securities and Exchange Board of India, shall be authorised by an officer
+                  holding a post equivalent to the post of Joint Secretary in the Government of India and
+                  shall be signed by an officer holding a post not below the rank of an Under Secretary or
+                  equivalent in the Central or State Government, as the case may be.
+                </li>
+                <li>
+                  A complaint filed by or on behalf of a company or a firm, shall be accompanied by a
+                  resolution, duly passed by the Board of Directors of the company or the partners of the
+                  firm, as the case may be, specifically authorizing an officer or a person to make the
+                  complaint on behalf of the company or the firm.
+                  <br />
+                  <em>Explanation.</em> — In the case of a bank or financial institution, the general
+                  resolution or power of attorney authorizing an officer holding a particular position to
+                  file complaints on behalf of the bank or financial institution, shall be deemed to be
+                  the specific resolution passed by the bank or financial institution concerned, for the
+                  purposes of these rules.
+                </li>
+                <li>
+                  In case of complaints filed by any Government, statutory authority, bank or financial
+                  institution, a change in the name of complainant at any later stage, shall be duly
+                  supported by a specific authorization made by an officer holding a post equivalent to
+                  that of the original complainant.
+                </li>
+                <li>
+                  Every complaint received by the Directorate shall be acknowledged by ordinary post
+                  together with an acknowledgement number.
+                </li>
+              </ol>
+            </div>
+            <div className="reg-rules-foot">
+              <button type="button" className="reg-btn reg-btn-primary" onClick={() => setShowRules(false)}>
+                <i className="bi bi-check2-circle me-1" />I Understand
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Left branding panel */}
       <aside className="reg-brand">
         <div className="reg-brand-content">
