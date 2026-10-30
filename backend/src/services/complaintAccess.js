@@ -236,8 +236,10 @@ function viewerHasSubmitted(history, role, user, afterCompStatusId) {
     if (after && Number(row.CompStatusID) <= after) return false;
     if (![52, 131, 132].includes(Number(row.StatusID))) return false;
     const submitted = parseAdSubmit(row.CommonField) || [SUBMIT_STATUS_PARTY[Number(row.StatusID)]].filter(Boolean);
-    if (!submitted.includes(role)) return false;
+    // A member may have furnished the document as the respondent of a firm, so
+    // any submission by that member's email already counts as theirs.
     if (role === 'thirdparty') return lower(row.ByUserEmail) === email && !!email;
+    if (!submitted.includes(role)) return false;
     return Number(row.UserID) === userId;
   });
 }

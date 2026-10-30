@@ -1310,8 +1310,11 @@ function AdditionalDocumentRequestCard({ compId, c, onRefresh }) {
   const [remarks, setRemarks] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const hasRespondent = !!String(c.ResEmailID || '').trim();
   const answerable = c.answerable || [];
+  // In a firm complaint the answerable members act as the respondent, so the
+  // respondent option stays available even without a single ResEmailID.
+  const hasRespondent =
+    !!String(c.ResEmailID || '').trim() || (Number(c.IsFirm) === 1 && answerable.length > 0);
   const available = AD_PARTY_OPTIONS.filter(
     (o) =>
       (o.key === 'complainant' && c.UserID) ||
@@ -2408,7 +2411,21 @@ export default function ComplaintDetail() {
   // Additional document - who it was called for from and who is still to
   // furnish it. The complaint waits at status 51 until everyone has submitted.
   const adRequest = c.additionalDocumentRequest || null;
-  const adPendingForViewer = !!(adRequest && viewerRole && (adRequest.Pending || []).includes(viewerRole));
+  const adPendingForViewer = !!(
+    adRequest &&
+    viewerRole &&
+    ((adRequest.Pending || []).includes(viewerRole) ||
+      (adRequest.ViewerCanSubmit && !adRequest.ViewerSubmitted))
+  );
+  // A member of a firm acts as the respondent when the document was called for
+  // from the respondent, so label the submission card accordingly.
+  const adViewerRole =
+    viewerRole === 'thirdparty' &&
+    Number(c.IsFirm) === 1 &&
+    (adRequest?.RequestedFrom || []).includes('respondent') &&
+    !(adRequest?.RequestedFrom || []).includes('thirdparty')
+      ? 'respondent'
+      : viewerRole;
   // Rule 5(4) - the complainant and the respondent only get to see the
   // complaint numbers of the complaints clubbed / closed with their complaint.
   // Every other detail of those complaints stays hidden from them. The first
@@ -4168,9 +4185,9 @@ export default function ComplaintDetail() {
               here. The complaint waits until every requested party has submitted. */}
           {viewerRole && adRequest && Number(c.StatusID) === 51 && (
             adRequest.ViewerSubmitted ? (
-              <AdditionalDocumentSubmittedCard role={viewerRole} />
+              <AdditionalDocumentSubmittedCard role={adViewerRole} />
             ) : adPendingForViewer ? (
-              <AdditionalDocumentCard compId={id} c={c} onRefresh={reload} role={viewerRole} />
+              <AdditionalDocumentCard compId={id} c={c} onRefresh={reload} role={adViewerRole} />
             ) : null
           )}
 

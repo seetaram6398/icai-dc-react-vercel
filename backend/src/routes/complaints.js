@@ -989,6 +989,14 @@ router.get('/:id', async (req, res) => {
         req.user,
         adState.RequestCompStatusID
       );
+      // In a firm complaint the answerable members act as the respondent, so a
+      // member may furnish a document called for from the respondent too.
+      adState.ViewerCanSubmit = !viewerIsInternal && !!viewerRole && (
+        adState.RequestedFrom.includes(viewerRole) ||
+        (viewerRole === 'thirdparty' &&
+          Number(complaint[0].IsFirm) === 1 &&
+          adState.RequestedFrom.includes('respondent'))
+      );
       if (!viewerIsInternal) {
         adState.PendingEmails = [];
       }
@@ -1562,7 +1570,7 @@ router.post('/:id/additional-document-request', async (req, res) => {
     }
 
     const compRow = await query(
-      'SELECT CompID, CompNo, StatusID, UserID, ResEmailID FROM tbl_NewComplaint WHERE CompID=@id',
+      'SELECT CompID, CompNo, StatusID, UserID, ResEmailID, IsFirm FROM tbl_NewComplaint WHERE CompID=@id',
       { id: compId }
     );
     if (compRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
@@ -1573,17 +1581,21 @@ router.post('/:id/additional-document-request', async (req, res) => {
     }
 
     // The respondent / the third party have to be on the complaint to be called
-    // for the document.
+    // for the document. In a firm complaint the answerable members act as the
+    // respondent, so the respondent option is available even when no single
+    // ResEmailID is stored.
+    const isFirm = Number(compRow[0].IsFirm) === 1;
+    const members = await query('SELECT COUNT(*) AS cnt FROM tbl_AnswerableMember WHERE CompID=@id', { id: compId });
+    const memberCount = Number(members[0].cnt);
     if (requestedFrom.includes('respondent') && !String(compRow[0].ResEmailID || '').trim()) {
-      return res.status(400).json({ error: 'There is no respondent on this complaint' });
-    }
-    if (requestedFrom.includes('thirdparty')) {
-      const members = await query('SELECT COUNT(*) AS cnt FROM tbl_AnswerableMember WHERE CompID=@id', { id: compId });
-      if (!Number(members[0].cnt)) {
-        return res.status(400).json({
-          error: 'There is no third party / answerable member on this complaint',
-        });
+      if (!isFirm || !memberCount) {
+        return res.status(400).json({ error: 'There is no respondent on this complaint' });
       }
+    }
+    if (requestedFrom.includes('thirdparty') && !memberCount) {
+      return res.status(400).json({
+        error: 'There is no third party / answerable member on this complaint',
+      });
     }
 
     await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=51 WHERE CompID=@id', { id: compId });
@@ -1631,7 +1643,7 @@ router.post('/:id/additional-document', async (req, res) => {
     }
 
     const compRow = await query(
-      'SELECT CompID, CompNo, StatusID, UserID, ResEmailID FROM tbl_NewComplaint WHERE CompID=@id',
+      'SELECT CompID, CompNo, StatusID, UserID, ResEmailID, IsFirm FROM tbl_NewComplaint WHERE CompID=@id',
       { id: compId }
     );
     if (compRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
@@ -1657,9 +1669,17 @@ router.post('/:id/additional-document', async (req, res) => {
     );
     const state = buildAdRequestState(history, answerable);
     const requestedFrom = state ? state.RequestedFrom : ['complainant'];
-    if (!requestedFrom.includes(role)) {
+    // In a firm complaint the answerable members act as the respondent, so a
+    // member may furnish a document called for from the respondent as well.
+    const isFirm = Number(compRow[0].IsFirm) === 1;
+    const memberActingAsRespondent =
+      role === 'thirdparty' && isFirm && requestedFrom.includes('respondent');
+    if (!requestedFrom.includes(role) && !memberActingAsRespondent) {
       return res.status(403).json({ error: 'The additional document has not been called for from you' });
     }
+    const submitRoles = memberActingAsRespondent
+      ? ['respondent', ...(requestedFrom.includes('thirdparty') ? ['thirdparty'] : [])]
+      : [role];
 
     // Guard: never re-insert when the case is already parked at Status 59.
     const maxRow = await query(
@@ -1684,7 +1704,7 @@ router.post('/:id/additional-document', async (req, res) => {
 
     // The status the submission is recorded at depends on the party that has
     // furnished it.
-    const submitStatusId = role === 'complainant' ? 52 : role === 'respondent' ? 131 : 132;
+    const submitStatusId = submitRoles.includes('respondent') ? 131 : role === 'complainant' ? 52 : 132;
 
     await executeNonQuery(
       `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment, CommonField)
@@ -1696,7 +1716,7 @@ router.post('/:id/additional-document', async (req, res) => {
         userToId: userToId || null,
         remarks: String(remarks).trim(),
         attachment,
-        commonField: `ADSub=${role}`,
+        commonField: `ADSub=${submitRoles.join(';')}`,
       }
     );
 
