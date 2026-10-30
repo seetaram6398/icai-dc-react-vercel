@@ -158,13 +158,13 @@ router.get('/member', async (req, res) => {
     let partyCond;
     if (userType === 2) {
       partyCond = `vw_DashBoard.CompID IN (
-        SELECT CompID FROM tbl_NewComplaint WHERE UserID=@userId
+        SELECT CompID FROM tbl_NewComplaint WHERE UserID=@userId AND (IsTemp IS NULL OR IsTemp=0)
         UNION
         SELECT CompID FROM tbl_NewComplaint WHERE LOWER(LTRIM(RTRIM(ResEmailID)))=@email AND (IsTemp IS NULL OR IsTemp=0)
         UNION
         SELECT CompID FROM tbl_AnswerableMember WHERE LOWER(LTRIM(RTRIM(MemEmailID)))=@email)`;
     } else {
-      partyCond = `vw_DashBoard.CompID IN (SELECT CompID FROM tbl_NewComplaint WHERE UserID=@userId)`;
+      partyCond = `vw_DashBoard.CompID IN (SELECT CompID FROM tbl_NewComplaint WHERE UserID=@userId AND (IsTemp IS NULL OR IsTemp=0))`;
     }
 
     const sqlStr = `

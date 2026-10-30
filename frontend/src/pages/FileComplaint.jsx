@@ -193,6 +193,9 @@ export default function FileComplaint() {
   const [captcha, setCaptcha] = useState(null);
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [memberLookupBusy, setMemberLookupBusy] = useState(false);
+  // Preview saves the complaint as a draft (IsTemp=1). It is only considered
+  // submitted, and auto-assigned to an SO, when the Submit button is pressed.
+  const [isDraftComplaint, setIsDraftComplaint] = useState(searchParams.get('draft') === '1');
 
   const [personName, setPersonName] = useState('');
   const [personMobile, setPersonMobile] = useState('');
@@ -370,6 +373,7 @@ export default function FileComplaint() {
       try {
         const { data: d } = await api.get(`/complaints/${editId}`);
         if (cancelled) return;
+        setIsDraftComplaint(Number(d.IsTemp) === 1);
         const stateObj = states.find((s) => String(s.value) === String(d.StateID));
         const resStateObj = states.find((s) => String(s.value) === String(d.RStateID));
         const profStateObj = states.find(
@@ -924,18 +928,28 @@ export default function FileComplaint() {
       for (const k of ['stateId', 'cityId', 'resStateId', 'resCityId', 'firmProfStateId', 'firmProfCityId']) {
         payload[k] = /^\d+$/.test(String(payload[k] || '').trim()) ? String(payload[k]).trim() : '';
       }
+      // Preview is stored as a draft only. The complaint is not treated as
+      // submitted and is not auto-assigned to an SO until Submit is clicked.
+      const savePayload = { ...payload, isDraft: preview };
       let data;
       if (isEdit) {
-        data = (await api.put(`/complaints/${editId}`, payload)).data;
+        data = (await api.put(`/complaints/${editId}`, savePayload)).data;
       } else {
-        data = (await api.post('/complaints', payload)).data;
+        data = (await api.post('/complaints', savePayload)).data;
       }
       if (preview) {
-        popup.success(`Complaint saved as draft (${data.CompNo || editId}). Preview will be available soon.`);
+        if (isEdit) {
+          popup.success('Draft updated. You can continue editing and submit when ready.');
+        } else {
+          popup.success(`Complaint saved as draft (${data.CompNo}). You can update the details and submit when ready.`);
+          navigate(`/file-complaint?edit=${data.CompID}&draft=1`, { replace: true });
+        }
       } else {
         if (isEdit) {
-          popup.success('Complaint updated and sent to SO successfully');
-          navigate(`/complaints/${editId}`);
+          popup.success(isDraftComplaint
+            ? `Complaint ${data.CompNo || editId} submitted successfully`
+            : 'Complaint updated and sent to SO successfully');
+          navigate(`/complaints/${data.CompID || editId}`);
         } else {
           popup.success(`Complaint ${data.CompNo} filed successfully`);
           navigate(`/complaints/${data.CompID}`);
@@ -963,12 +977,14 @@ export default function FileComplaint() {
         <button className="btn btn-outline-secondary me-3 btn-sm" onClick={goBack}><i className="bi bi-arrow-left"></i></button>
         <div>
           <h4 className="mb-0">
-            {isEdit ? 'Edit Complaint' : 'Register New Complaint'}
+            {isDraftComplaint ? 'Draft Complaint' : isEdit ? 'Edit Complaint' : 'Register New Complaint'}
             <span className="fw-bold ms-2" style={{ fontSize: '0.99rem' }}>(FORM {formType})</span>
           </h4>
-          {isEdit
-            ? <small className="text-muted">Modify all complaint details using the complaint submission form. The updated complaint will be sent to the SO for re-scrutiny.</small>
-            : (!isDD && <small className="text-muted">{formTitle}</small>)}
+          {isDraftComplaint
+            ? <small className="text-muted">This complaint is saved as a draft. Update the details below and click Submit Complaint when ready. It will be treated as submitted, and assigned to the SO, only after you submit it.</small>
+            : isEdit
+              ? <small className="text-muted">Modify all complaint details using the complaint submission form. The updated complaint will be sent to the SO for re-scrutiny.</small>
+              : (!isDD && <small className="text-muted">{formTitle}</small>)}
         </div>
       </div>
 
@@ -1638,7 +1654,7 @@ export default function FileComplaint() {
       {/* ===== SUBMIT ===== */}
       <div className="d-flex gap-3 mb-5">
         <button className="btn btn-primary btn-lg" disabled={busy} onClick={() => handleSubmit(false)} type="button">
-          {busy ? <><span className="spinner-border spinner-border-sm me-2"></span>Submitting...</> : <><i className="bi bi-send me-2"></i>{isEdit ? 'Submit Edited Complaint' : 'Submit Complaint'}</>}
+          {busy ? <><span className="spinner-border spinner-border-sm me-2"></span>Submitting...</> : <><i className="bi bi-send me-2"></i>{isEdit && !isDraftComplaint ? 'Submit Edited Complaint' : 'Submit Complaint'}</>}
         </button>
         {!isEdit && (
           <button className="btn btn-outline-secondary btn-lg" disabled={busy} onClick={() => handleSubmit(true)} type="button">

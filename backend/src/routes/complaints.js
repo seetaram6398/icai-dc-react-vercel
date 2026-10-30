@@ -1722,15 +1722,18 @@ router.put('/:id', async (req, res) => {
     const existing = await query('SELECT * FROM tbl_NewComplaint WHERE CompID=@id', { id });
     if (existing.length === 0) return res.status(404).json({ error: 'Complaint not found' });
     const cur = existing[0];
+    const isDraft = b.isDraft === true || b.isDraft === 1 || b.isDraft === '1';
+    const wasDraft = Number(cur.IsTemp) === 1;
 
     // Only the complainant who filed it (or a DD / admin) may edit. The complaint
-    // must be awaiting rectification (Status 3) or already re-submitted (Status 4).
+    // must be a draft, awaiting rectification (Status 3) or already re-submitted
+    // (Status 4).
     const isOwner = String(cur.UserID) === String(userId);
     const isAdmin = [1, 4].includes(userType);
     if (!isOwner && !isAdmin) {
       return res.status(403).json({ error: 'You are not authorised to edit this complaint' });
     }
-    if (!isAdmin && ![3, 4].includes(Number(cur.StatusID))) {
+    if (!isAdmin && !wasDraft && ![3, 4].includes(Number(cur.StatusID))) {
       return res.status(400).json({ error: 'Only defect-returned complaints can be edited' });
     }
 
@@ -1942,6 +1945,62 @@ router.put('/:id', async (req, res) => {
           { compId: id, attachment: av.attachment || av.path || null, userId }
         );
       }
+    }
+
+    // ----- Status transitions -----
+
+    // Preview save: keep the record as a draft. Do not change the status and do
+    // not assign it to an SO - that only happens on an actual submit. If the
+    // complaint was already submitted, just save the edits and leave it as is.
+    if (isDraft) {
+      if (wasDraft) {
+        await executeNonQuery('UPDATE tbl_NewComplaint SET IsTemp=1 WHERE CompID=@id', { id });
+      }
+      return res.json({
+        message: 'Draft saved',
+        CompID: id,
+        CompNo: cur.CompNo,
+        StatusID: Number(cur.StatusID),
+        IsTemp: wasDraft ? 1 : Number(cur.IsTemp) || 0,
+      });
+    }
+
+    // Submitting a draft for the first time: mark it final and let the DP
+    // auto-assign it to the fixed SO (Status 2), exactly like a fresh complaint.
+    if (wasDraft) {
+      const fixedSO = await resolveFixedSO();
+      await executeNonQuery('UPDATE tbl_NewComplaint SET IsTemp=0 WHERE CompID=@id', { id });
+      if (fixedSO) {
+        const alreadyAssigned = await query(
+          `SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus
+           WHERE CompaintID=@id AND StatusID=2 AND UserToID IS NOT NULL`,
+          { id }
+        );
+        if (!alreadyAssigned.length) {
+          await executeNonQuery(
+            `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks)
+             VALUES (@id, 2, @userId, @userToId, GETDATE(), 'Auto-assigned to fixed SO as per DC Flow')`,
+            { id, userId, userToId: fixedSO }
+          );
+        }
+        await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=2 WHERE CompID=@id', { id });
+        return res.json({
+          message: 'Complaint submitted successfully',
+          CompID: id,
+          CompNo: cur.CompNo,
+          StatusID: 2,
+          IsTemp: 0,
+        });
+      }
+      // No SO could be resolved: remains Status 1 for manual assignment by the DD.
+      await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=1 WHERE CompID=@id', { id });
+      return res.json({
+        message: 'Complaint submitted successfully',
+        CompID: id,
+        CompNo: cur.CompNo,
+        StatusID: 1,
+        IsTemp: 0,
+      });
     }
 
     // ----- Move back to the SO for re-scrutiny (Status 4) -----
@@ -2165,6 +2224,10 @@ router.post('/', async (req, res) => {
     const userId = req.user.UserID;
     const year = new Date().getFullYear();
     const userType = Number(req.user.UserType);
+    // A preview is persisted as a draft (IsTemp=1). Drafts are hidden from the
+    // complaint register and are NOT auto-assigned to an SO; assignment happens
+    // only when the complainant later submits the complaint.
+    const isDraft = b.isDraft === true || b.isDraft === 1 || b.isDraft === '1';
 
     // Determine gov prefix from complaint type
     const compType = await query('SELECT CompTypeID, CompTypeName, IsGov FROM tbl_CompType WHERE CompTypeID=@id', {
@@ -2331,7 +2394,7 @@ router.post('/', async (req, res) => {
         firmCommAddr: b.firmCommAddress || null,
         firmProfStateId: b.firmProfStateId || null,
         firmProfCityId: b.firmProfCityId || null,
-        isTemp: 0,
+        isTemp: isDraft ? 1 : 0,
         formType: b.formType || null,
         investReport: b.investigatingReport || null,
         isInvestReport: b.isInvestigatingReportAvailable ? 1 : 0,
@@ -2358,14 +2421,17 @@ router.post('/', async (req, res) => {
     // DC Flow step 1: the DP auto-assigns the received complaint to the fixed SO
     // for scrutiny (Status 2). If no SO is resolvable, the complaint stays at
     // Status 1 (Complaint Received) for a manual assignment by the DD.
-    const fixedSO = await resolveFixedSO();
-    if (fixedSO) {
-      await executeNonQuery(
-        `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks)
-         VALUES (@id, 2, @userId, @userToId, GETDATE(), 'Auto-assigned to fixed SO as per DC Flow')`,
-        { id: compId, userId, userToId: fixedSO }
-      );
-      await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=2 WHERE CompID=@id', { id: compId });
+    // Drafts are never assigned - they wait until the complainant submits.
+    if (!isDraft) {
+      const fixedSO = await resolveFixedSO();
+      if (fixedSO) {
+        await executeNonQuery(
+          `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks)
+           VALUES (@id, 2, @userId, @userToId, GETDATE(), 'Auto-assigned to fixed SO as per DC Flow')`,
+          { id: compId, userId, userToId: fixedSO }
+        );
+        await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=2 WHERE CompID=@id', { id: compId });
+      }
     }
 
     // --- Insert grid/detail records ---
@@ -2458,7 +2524,7 @@ router.post('/', async (req, res) => {
       }
     }
 
-    res.status(201).json({ CompID: compId, CompNo: compNo });
+    res.status(201).json({ CompID: compId, CompNo: compNo, IsTemp: isDraft ? 1 : 0 });
   } catch (e) {
     console.error('create complaint error:', e);
     res.status(500).json({ error: 'Server error' });
