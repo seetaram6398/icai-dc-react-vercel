@@ -4,7 +4,11 @@ const { authMiddleware } = require('../services/auth');
 const { buildComplaintPdf } = require('../services/formPdf');
 const { buildScrutinyPdf } = require('../services/scrutinyPdf');
 const { buildScrutinyDefaults } = require('../services/scrutinyDefaults');
-const { ensureRespondentUserForComplaint } = require('../services/respondent');
+const {
+  ensureRespondentUserForComplaint,
+  ensureAnswerableUserFromMember,
+  ensureAnswerableUsersForComplaint,
+} = require('../services/respondent');
 const { statusText } = require('../utils/statusText');
 const {
   isInternalUser,
@@ -929,8 +933,11 @@ router.get('/:id', async (req, res) => {
       { id }
     );
     const subStatus = await query(
-      `SELECT cs.*, sm.StatusName FROM tbl_ComplaintSubStatus cs
+      `SELECT cs.*, sm.StatusName,
+              u.NameOfTheUser AS ByUserName, u.Email AS ByUserEmail
+       FROM tbl_ComplaintSubStatus cs
        LEFT JOIN tbl_StatusMaster sm ON cs.StatusID = sm.StatusID
+       LEFT JOIN tbl_Users u ON u.UserID = cs.UserID
        WHERE cs.CompID=@id ORDER BY cs.CSubStatusID DESC`,
       { id }
     );
@@ -1196,6 +1203,10 @@ router.post('/:id/answerable', async (req, res) => {
     if (!memName) return res.status(400).json({ error: 'Please enter Member Name' });
     if (!memRegNo) return res.status(400).json({ error: 'Please enter Member Registration No' });
     if (!/^\d+$/.test(memRegNo)) return res.status(400).json({ error: 'Please enter a valid Answerable Membership No' });
+    if (!memEmail) return res.status(400).json({ error: 'Please enter Email ID' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(memEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid Email ID' });
+    }
     if (b.memCommStateId == null) return res.status(400).json({ error: 'Please Select Communication State' });
     if (b.memCommCityId == null) return res.status(400).json({ error: 'Please Select Communication City' });
 
@@ -1238,27 +1249,15 @@ router.post('/:id/answerable', async (req, res) => {
     );
     const amemId = result[0]?.AMemID;
 
-    // Create a login for the answerable member if they don't have an account yet.
-    if (memEmail) {
-      const existingUser = await query(
-        'SELECT COUNT(*) AS cnt FROM tbl_Users WHERE LOWER(LTRIM(RTRIM(Email)))=@e',
-        { e: memEmail.toLowerCase() }
-      );
-      if (Number(existingUser[0].cnt) === 0) {
-        await executeNonQuery(
-          `INSERT INTO tbl_Users (LoginID, NameOfTheUser, MembershipNo, Mob, Email, City, UserType, ASID, IsDeactivated, IsVerify)
-           VALUES (@login, @name, @regNo, @mobile, @email, @city, 2, 1, 0, 1)`,
-          {
-            login: memEmail,
-            name: memName,
-            regNo: memRegNo,
-            mobile: b.memMobileNo || null,
-            email: memEmail,
-            city: b.memProCity || null,
-          }
-        );
-      }
-    }
+    // Answerable members act as the respondents of a firm complaint, so give
+    // each of them a UserType-2 login account immediately.
+    await ensureAnswerableUserFromMember({
+      MemName: memName,
+      MemRegistrationNo: memRegNo,
+      MemMobileNo: b.memMobileNo,
+      MemEmailID: memEmail,
+      MemCityName: b.memProCity,
+    });
 
     const created = await query('SELECT * FROM tbl_AnswerableMember WHERE AMemID=@id', { id: amemId });
     res.json(created[0] || { AMemID: amemId });
@@ -1331,6 +1330,12 @@ router.post('/:id/respondent-response', async (req, res) => {
     const { kind, remarks, attachment } = req.body;
     const userId = req.user.UserID;
 
+    const access = await getComplaintAccess(req, compId);
+    if (!access.allowed) return res.status(403).json({ error: access.reason || 'Not allowed' });
+    if (access.viewerIsInternal || !['respondent', 'thirdparty'].includes(access.viewerRole)) {
+      return res.status(403).json({ error: 'Only the respondent can submit this response' });
+    }
+
     if (kind !== 'written' && kind !== 'rule12') {
       return res.status(400).json({ error: 'Invalid response type' });
     }
@@ -1345,8 +1350,11 @@ router.post('/:id/respondent-response', async (req, res) => {
     // (or their firm's answerable members) can keep accessing the case later.
     await ensureRespondentUserForComplaint(compId);
 
-    const compRow = await query('SELECT IsFirm FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
+    const compRow = await query('SELECT IsFirm, StatusID FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
     if (compRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
+    if (Number(compRow[0].StatusID) !== 15) {
+      return res.status(409).json({ error: 'The written statement / Rule 12 application can be submitted only when it is sought' });
+    }
     const isFirm = Number(compRow[0].IsFirm) === 1;
 
     const target = kind === 'written' ? 16 : 63;
@@ -1363,12 +1371,34 @@ router.post('/:id/respondent-response', async (req, res) => {
 
     const userToId = await resolveSOFromStatement(compId);
 
-    // Firm complaint with answerable members: record each member's reply and only
-    // advance the case when every answerable member has submitted their statement.
+    // Firm complaint with answerable members: each answerable member acts as the
+    // respondent and files their own statement. The case advances to Status 16
+    // only after every answerable member has submitted.
     if (kind === 'written' && isFirm) {
-      const answerable = await query('SELECT COUNT(*) AS cnt FROM tbl_AnswerableMember WHERE CompID=@id', { id: compId });
+      // Count the distinct member emails: each email is one login and therefore
+      // one written statement (duplicate rows for the same member must not keep
+      // the case pending forever). Members saved without an email are legacy
+      // rows and cannot log in, so they are not waited on.
+      const answerable = await query(
+        `SELECT COUNT(DISTINCT LOWER(LTRIM(RTRIM(MemEmailID)))) AS cnt
+         FROM tbl_AnswerableMember
+         WHERE CompID=@id AND MemEmailID IS NOT NULL AND LTRIM(RTRIM(MemEmailID))<>''`,
+        { id: compId }
+      );
       const total = Number(answerable[0].cnt);
       if (total > 0) {
+        const reviewerEmail = String(req.user.Email || '').trim().toLowerCase();
+        const memberRow = await query(
+          `SELECT TOP 1 AMemID FROM tbl_AnswerableMember
+           WHERE CompID=@id AND LOWER(LTRIM(RTRIM(MemEmailID)))=@email`,
+          { id: compId, email: reviewerEmail }
+        );
+        if (!memberRow.length) {
+          return res.status(403).json({
+            error: 'Only the answerable members of the firm can submit the written statement.',
+          });
+        }
+
         const already = await query(
           'SELECT COUNT(*) AS cnt FROM tbl_ComplaintSubStatus WHERE CompID=@id AND StatusID=16 AND UserID=@userId',
           { id: compId, userId }
@@ -1381,8 +1411,18 @@ router.post('/:id/respondent-response', async (req, res) => {
           { userId, remarks: String(remarks).trim(), compId: Number(compId), attachment }
         );
 
+        // Count only the statements filed by the current answerable members, so
+        // an older submission by the firm's respondent cannot complete the list.
         const doneRow = await query(
-          'SELECT COUNT(*) AS cnt FROM tbl_ComplaintSubStatus WHERE CompID=@id AND StatusID=16',
+          `SELECT COUNT(DISTINCT cs.UserID) AS cnt
+           FROM tbl_ComplaintSubStatus cs
+           INNER JOIN tbl_Users u ON u.UserID = cs.UserID
+           WHERE cs.CompID=@id AND cs.StatusID=16
+             AND LOWER(LTRIM(RTRIM(u.Email))) IN (
+               SELECT LOWER(LTRIM(RTRIM(MemEmailID)))
+               FROM tbl_AnswerableMember
+               WHERE CompID=@id AND MemEmailID IS NOT NULL AND LTRIM(RTRIM(MemEmailID))<>''
+             )`,
           { id: compId }
         );
         if (Number(doneRow[0].cnt) < total) {
@@ -1936,7 +1976,11 @@ router.put('/:id', async (req, res) => {
           }
         );
       }
+
+      // Answerable members get their own login accounts (firm respondents).
+      await ensureAnswerableUsersForComplaint(id);
     }
+
     if (Array.isArray(b.audioVideo)) {
       for (const av of b.audioVideo) {
         await executeNonQuery(
@@ -2224,6 +2268,10 @@ router.post('/', async (req, res) => {
     const userId = req.user.UserID;
     const year = new Date().getFullYear();
     const userType = Number(req.user.UserType);
+    // Respondents (UserType 2) reply to cases; they cannot file a complaint.
+    if (![1, 3, 4].includes(userType)) {
+      return res.status(403).json({ error: 'Respondent accounts cannot file a complaint' });
+    }
     // A preview is persisted as a draft (IsTemp=1). Drafts are hidden from the
     // complaint register and are NOT auto-assigned to an SO; assignment happens
     // only when the complainant later submits the complaint.
@@ -2512,6 +2560,10 @@ router.post('/', async (req, res) => {
         );
       }
     }
+
+    // Give every answerable member their own login so they can file the
+    // written statement for the firm complaint.
+    await ensureAnswerableUsersForComplaint(compId);
 
     // Audio/Video attachments
     if (Array.isArray(b.audioVideo)) {

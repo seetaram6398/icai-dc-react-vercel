@@ -744,7 +744,8 @@ export default function FileComplaint() {
         : 'Please enter a valid mobile number');
       return;
     }
-    if (memEmail && !isValidEmail(memEmail)) { popup.warning('Please enter valid email ID'); return; }
+    if (!memEmail) { popup.warning('Please enter Email ID'); return; }
+    if (!isValidEmail(memEmail)) { popup.warning('Please enter valid email ID'); return; }
     if (memName && !isValidName(memName)) { popup.warning('Please enter a valid Name (letters only)'); return; }
     if (!memProAddress.trim()) { popup.warning('Please enter Professional Address'); return; }
     if (!memCommAddress.trim()) { popup.warning('Please enter Communication Address'); return; }
@@ -1298,7 +1299,7 @@ export default function FileComplaint() {
                 <div className="col-md-3"><label className="form-label">Name</label><input className="form-control" value={memName} onChange={(e) => setMemName(e.target.value)} /></div>
                 <div className="col-md-2"><label className="form-label">Country Code</label><select className="form-select" value={memCountryCode} onChange={(e) => setMemCountryCode(e.target.value)}>{CCODES.map((c)=><option key={c} value={c}>+{c}</option>)}</select></div>
                 <div className="col-md-2"><label className="form-label">Mobile No</label><input className="form-control" maxLength={String(memCountryCode) === '91' ? 10 : 15} inputMode="numeric" value={memMobile} onChange={(e) => setMemMobile(sanitizeDigits(e.target.value, 15))} /></div>
-                <div className="col-md-5"><label className="form-label">Email ID</label><input className="form-control" maxLength={100} value={memEmail} onChange={(e) => setMemEmail(e.target.value.trim())} /></div>
+                <div className="col-md-5"><label className="form-label">Email ID <span className="text-danger">*</span></label><input type="email" className="form-control" maxLength={100} value={memEmail} onChange={(e) => setMemEmail(e.target.value.trim())} required /></div>
               </div>
               <div className="row g-3 mb-3">
                 <div className="col-md-6">

@@ -28,7 +28,9 @@ const PARTY_COMMUNICATION_STATUSES = [3, 13, 14, 15, 22, 51, 56, 66, 123];
 const PARTY_ROLE_COMMUNICATION_STATUSES = {
   complainant: [3, 13, 14, 22, 51, 56, 66, 123],
   respondent: [15, 51],
-  thirdparty: [51],
+  // Answerable members of a firm complaint act as respondents, so they must see
+  // the written-statement query (status 15) issued to the firm.
+  thirdparty: [15, 51],
 };
 
 // The parties an additional document can be called for from.

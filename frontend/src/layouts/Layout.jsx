@@ -55,7 +55,8 @@ const REPORTS_UT = [1, 4, 5, 6, 7, 8, 10];
 const MGMT_UT = [1, 4]; // Master Data / Board Formation / Agenda Generate are withheld from BOD (legacy Role 6 has none)
 const MY_COMPLAINTS_UT = [1, 2, 3, 4];
 const MEMBER_REPORTS_UT = [1, 2, 4];
-const FILE_UT = [1, 2, 3, 4];
+// Respondents (UserType 2) cannot file complaints - they only reply to cases.
+const FILE_UT = [1, 3, 4];
 
 function initials(name = '') {
   return name
@@ -150,7 +151,7 @@ export default function Layout() {
   const pageTitle = Object.keys(PAGE_LABELS)
     .sort((a, b) => b.length - a.length)
     .find((k) => location.pathname === k || location.pathname.startsWith(k + '/'));
-  const fileComplaintLabel = ut === 4 ? 'Suo Moto' : ut === 2 || ut === 3 ? 'Add New Complaint' : 'File Complaint';
+  const fileComplaintLabel = ut === 4 ? 'Suo Moto' : ut === 3 ? 'Add New Complaint' : 'File Complaint';
   const currentLabel = pageTitle === '/file-complaint'
     ? fileComplaintLabel
     : (pageTitle ? PAGE_LABELS[pageTitle] : 'Home');

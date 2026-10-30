@@ -592,7 +592,7 @@ const INIT_MEMBER = {
 //     each answerable member files their Written Statement; the case travels to
 //     Status 16 only after every answerable member has filed.
 // Both replies are routed back to the SO who sought the statement.
-function RespondentStatementCard({ compId, c, onRefresh }) {
+function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alreadySubmitted }) {
   const popup = usePopups();
   const [mode, setMode] = useState(''); // '' | 'yes' | 'no'
   const [mapOpen, setMapOpen] = useState(false);
@@ -610,9 +610,23 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
 
   const isFirm = Number(c.IsFirm) === 1;
   const answerable = c.answerable || [];
+  const answerableWithEmail = answerable.filter((m) => m.MemEmailID && String(m.MemEmailID).trim());
+  const hasAnswerableLogins = answerableWithEmail.length > 0;
   const ask = isFirm && answerable.length === 0 && mode === '';
   const showForm = isFirm && (mode === 'yes' || mapOpen);
-  const canFile = !isFirm || answerable.length > 0 || mode === 'no';
+  // In a firm complaint every answerable member acts as the respondent and
+  // files their own written statement. The firm's own respondent login may not
+  // submit on their behalf.
+  const canFile = !alreadySubmitted && (
+    !isFirm
+      ? true
+      : answerable.length === 0
+        ? mode === 'no'
+        : hasAnswerableLogins
+          ? !!isAnswerableMember
+          : true
+  );
+  const waitingForMembers = isFirm && hasAnswerableLogins && !isAnswerableMember;
   const queryLetters = (c.statusHistory || []).filter((h) => Number(h.StatusID) === 15 && h.Attachment);
 
   const patchMember = (updates) => setMember((m) => ({ ...m, ...updates }));
@@ -689,6 +703,14 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
     }
     if (!/^\d+$/.test(member.memRegistrationNo.trim())) {
       popup.warning('Please enter a valid Answerable Membership No.');
+      return;
+    }
+    if (!String(member.memEmailID || '').trim()) {
+      popup.warning('Please enter Email ID.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(member.memEmailID).trim())) {
+      popup.warning('Please enter a valid Email ID.');
       return;
     }
     if (!member.memProAddress.trim()) {
@@ -1043,8 +1065,8 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
                   <input className="form-control" value={member.memCommAddress} onChange={(e) => patchMember({ memCommAddress: e.target.value })} required />
                 </div>
                 <div className="mb-3">
-                  <label className="form-label small fw-semibold">Email ID</label>
-                  <input type="email" className="form-control" value={member.memEmailID} onChange={(e) => patchMember({ memEmailID: e.target.value })} />
+                  <label className="form-label small fw-semibold">Email ID <span className="text-danger">*</span></label>
+                  <input type="email" className="form-control" value={member.memEmailID} onChange={(e) => patchMember({ memEmailID: e.target.value })} required />
                 </div>
                 <div className="d-flex gap-2">
                   <button type="submit" className="btn btn-primary flex-fill" disabled={ansBusy}>
@@ -1065,6 +1087,31 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {alreadySubmitted && (
+          <div className="alert alert-success small mb-0">
+            <i className="bi bi-check-circle me-1" />
+            Your written statement has been recorded. The case will move forward once every answerable member has submitted.
+          </div>
+        )}
+
+        {waitingForMembers && (
+          <div className="alert alert-info small mb-0">
+            <div className="fw-semibold mb-1">
+              <i className="bi bi-info-circle me-1" />
+              Written statement is filed by the answerable members
+            </div>
+            <div>Each answerable member of the firm must log in with their own email and submit the written statement:</div>
+            <ul className="mb-0 ps-3">
+              {answerableWithEmail.map((m, i) => (
+                <li key={m.AMemID || i}>
+                  {m.MemName || 'Answerable Member'}
+                  {m.MemEmailID ? ` (${m.MemEmailID})` : ''}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -1110,7 +1157,7 @@ function RespondentStatementCard({ compId, c, onRefresh }) {
             </div>
             <div className="mb-3">
               <label className="form-label small fw-semibold">Remarks <span className="text-danger">*</span></label>
-              <RichEditor value={remarks} onChange={setRemarks} required />
+              <RichEditor value={respRemarks} onChange={setRespRemarks} required />
             </div>
             <button type="submit" className="btn btn-primary w-100" disabled={respBusy}>
               {respBusy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}
@@ -2381,6 +2428,8 @@ export default function ComplaintDetail() {
     c.viewerIsInternal !== undefined && c.viewerIsInternal !== null
       ? !!c.viewerIsInternal
       : !([2, 3, 11].includes(ut) || isParty);
+  // Written statements filed by the answerable members of a firm complaint.
+  const writtenStatements = (c.subStatus || []).filter((s) => Number(s.StatusID) === 16);
   const isExternalParty = !viewerIsInternal || isClubbedParty;
   const partyHistory = (() => {
     const rows = [...(c.statusHistory || [])];
@@ -4045,7 +4094,70 @@ export default function ComplaintDetail() {
           )}
 
           {(isRespondent || isAnswerableMember) && Number(c.StatusID) === 15 && (
-            <RespondentStatementCard compId={id} c={c} onRefresh={reload} />
+            <RespondentStatementCard
+              compId={id}
+              c={c}
+              onRefresh={reload}
+              isAnswerableMember={isAnswerableMember}
+              alreadySubmitted={(c.subStatus || []).some(
+                (s) => Number(s.StatusID) === 16 && Number(s.UserID) === Number(user?.UserID)
+              )}
+            />
+          )}
+
+          {writtenStatements.length > 0 && (viewerIsInternal || isRespondent || isAnswerableMember) && (
+            <div className="card ds-card mb-4">
+              <div className="card-header">
+                <div className="card-title">
+                  <i className="bi bi-journal-text" />
+                  Written Statement{writtenStatements.length > 1 ? 's' : ''} filed by Answerable Members
+                </div>
+              </div>
+              <div className="card-body">
+                <div className="table-responsive">
+                  <table className="table table-sm align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 40 }}>#</th>
+                        <th>Member</th>
+                        <th>Date</th>
+                        <th>Remarks</th>
+                        <th>Document</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {writtenStatements.map((s, i) => (
+                        <tr key={s.CSubStatusID || i}>
+                          <td>{i + 1}</td>
+                          <td>{s.ByUserName || s.ByUserEmail || 'Answerable Member'}</td>
+                          <td className="text-nowrap">{fmtDate(s.Decisiondate || s.EntryDate)}</td>
+                          <td>
+                            <div
+                              className="rich-remark mb-0"
+                              dangerouslySetInnerHTML={{ __html: sanitizeHtml(s.Remarks) || '—' }}
+                            />
+                          </td>
+                          <td>
+                            {s.Attachment ? (
+                              <a
+                                className="btn btn-sm btn-outline-primary"
+                                href={`/documents/${s.Attachment}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <i className="bi bi-file-earmark-pdf me-1" />View
+                              </a>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           )}
 
           {isComplainant && Number(c.StatusID) === 22 && (

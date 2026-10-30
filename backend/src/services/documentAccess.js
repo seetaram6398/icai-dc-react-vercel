@@ -190,20 +190,23 @@ async function checkDocumentAccess(user, relPath) {
   // 5. Internal tables - the decision records, the stay applications, the
   //    cause lists, the findings and the adjournment attachments.
   const internalTables = [
-    ['tbl_ComplaintSubStatus', 'Attachment'],
-    ['tbl_StayDetails', 'FilePath'],
-    ['tbl_Finding', 'FindingFile'],
-    ['tbl_CauseList', 'Attachment'],
-    ['tbl_AdjournmentAttachment', 'Attachment'],
+    // The user column marks the party who filed the row (e.g. an answerable
+    // member's written statement); that party may open their own attachment.
+    ['tbl_ComplaintSubStatus', 'Attachment', 'UserID'],
+    ['tbl_StayDetails', 'FilePath', null],
+    ['tbl_Finding', 'FindingFile', null],
+    ['tbl_CauseList', 'Attachment', null],
+    ['tbl_AdjournmentAttachment', 'Attachment', null],
   ];
-  for (const [table, column] of internalTables) {
+  for (const [table, column, userColumn] of internalTables) {
     const hit = await query(
-      `SELECT TOP 1 CompID FROM ${table}
+      `SELECT TOP 1 CompID${userColumn ? `, ${userColumn} AS OwnerID` : ''} FROM ${table}
        WHERE ${column} IS NOT NULL AND LOWER(${column}) = @name`,
       { name }
     );
     if (hit.length) {
-      const allowed = isInternalUser(user);
+      const owned = !!userColumn && Number(hit[0].OwnerID) === Number(user.UserID);
+      const allowed = isInternalUser(user) || owned;
       return { allowed, reason: allowed ? '' : 'You are not allowed to view this document' };
     }
   }
