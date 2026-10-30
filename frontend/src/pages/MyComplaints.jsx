@@ -13,15 +13,14 @@ function MyComplaints() {
   const [statusIds, setStatusIds] = useState(searchParams.get('statusIds') || '');
   const ut = Number(user?.UserType);
   const isRespondent = ut === 2;
-  // Respondents never file complaints - they only see the cases where they are
-  // the named respondent or an answerable member.
-  const canFileComplaint = [1, 3, 4].includes(ut);
+  // Parties can file complaints; respondents additionally see the cases where
+  // they are the named respondent or an answerable member.
+  const canFileComplaint = [1, 2, 3, 4].includes(ut);
 
   useEffect(() => {
     const params = new URLSearchParams();
     if (statusIds) params.set('statusIds', statusIds);
-    if (isRespondent) params.set('respondentFor', user?.Email || '');
-    else params.set('complainantId', user.UserID);
+    if (!isRespondent) params.set('complainantId', user.UserID);
     api
       .get(`/complaints?${params.toString()}`)
       .then((res) => setRows(res.data))
@@ -35,12 +34,14 @@ function MyComplaints() {
         <div>
           <h4 className="mb-0">{isRespondent ? 'My Cases' : 'My Complaints'}</h4>
           <small className="text-muted">
-            {isRespondent ? 'Complaints where you are the respondent or an answerable member' : 'Complaints filed by you'}
+            {isRespondent
+              ? 'Complaints filed by you or where you are the respondent / answerable member'
+              : 'Complaints filed by you'}
           </small>
         </div>
         {canFileComplaint && (
           <button className="btn btn-primary" onClick={() => navigate('/file-complaint')}>
-            <i className="bi bi-plus-circle me-1"></i>{ut === 3 ? 'Add New Complaint' : 'File New Complaint'}
+            <i className="bi bi-plus-circle me-1"></i>{[2, 3].includes(ut) ? 'Add New Complaint' : 'File New Complaint'}
           </button>
         )}
       </div>
@@ -92,7 +93,7 @@ function MyComplaints() {
                   <tr>
                     <td colSpan="7" className="text-center text-muted py-4">
                       <i className="bi bi-inbox d-block mb-2" style={{ fontSize: '2rem' }} />
-                      {isRespondent ? 'No cases assigned to you yet' : 'No complaints filed yet'}
+                      {isRespondent ? 'No complaints or cases yet' : 'No complaints filed yet'}
                     </td>
                   </tr>
                 )}

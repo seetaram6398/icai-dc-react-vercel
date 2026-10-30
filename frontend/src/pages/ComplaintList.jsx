@@ -34,6 +34,8 @@ function ComplaintList() {
   const [statuses, setStatuses] = useState([]);
   const ut = Number(user?.UserType);
   const aspxView = ut === 3;
+  const canFileComplaint = [1, 2, 3].includes(ut);
+  const fileComplaintLabel = ut === 1 ? 'File New Complaint' : 'Add New Complaint';
   // Rule 5(4) - the staff (Admin / DD / SO) also see the clubbing and closure
   // relationships in the complaint list; the parties only ever see complaint
   // numbers, never any other detail of a clubbed complaint.
@@ -205,9 +207,9 @@ function ComplaintList() {
               <i className="bi bi-file-earmark-excel me-1" />Export CSV
             </button>
           )}
-          {ut === 1 && (
+          {canFileComplaint && (
             <button type="button" className="btn btn-primary" onClick={() => navigate('/file-complaint')}>
-              <i className="bi bi-plus-circle me-1" />File New Complaint
+              <i className="bi bi-plus-circle me-1" />{fileComplaintLabel}
             </button>
           )}
         </div>

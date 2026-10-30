@@ -2579,6 +2579,15 @@ export default function ComplaintDetail() {
               <i className="bi bi-download me-1" />Download Compilation
             </button>
           )}
+          {[2, 3].includes(Number(user?.UserType)) && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => navigate('/file-complaint')}
+            >
+              <i className="bi bi-plus-circle me-1" />Add New Complaint
+            </button>
+          )}
           <button
             type="button"
             className="admin-btn-icon"

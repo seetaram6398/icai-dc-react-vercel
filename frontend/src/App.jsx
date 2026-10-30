@@ -45,16 +45,6 @@ function Protected({ children }) {
   return children;
 }
 
-// Respondents (ICAI Member / UserType 2) cannot file complaints; keep them on
-// their case list even if they open /file-complaint directly.
-function CanFileComplaint({ children }) {
-  const { user } = useAuth();
-  if (Number(user?.UserType) === 2) {
-    return <Navigate to="/my-complaints" replace />;
-  }
-  return children;
-}
-
 function App() {
   return (
     <ErrorBoundary>
@@ -76,14 +66,7 @@ function App() {
         <Route path="complaints/:id" element={<ComplaintDetail />} />
         <Route path="my-complaints" element={<MyComplaints />} />
         <Route path="withdrawal/update" element={<ComplaintWithdrawalUpdate />} />
-        <Route
-          path="file-complaint"
-          element={
-            <CanFileComplaint>
-              <FileComplaint />
-            </CanFileComplaint>
-          }
-        />
+        <Route path="file-complaint" element={<FileComplaint />} />
         <Route path="agenda" element={<AgendaList />} />
         <Route path="agenda/generate" element={<AgendaGenerate />} />
         <Route path="hearings" element={<HearingList />} />

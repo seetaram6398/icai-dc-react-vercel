@@ -155,18 +155,21 @@ function buildListQuery(filters, user) {
     ids.forEach((id, i) => (params[`s${i}`] = id));
   }
   // Respondents (UserType 2) must always be scoped to their own complaints —
-  // whether they are the named respondent (ResEmailID) or an answerable member —
-  // so the list and the CSV export can never leak unrelated cases. Mirrors the
-  // explicit ?respondentFor= filter below.
+  // those they filed, the cases where they are the named respondent
+  // (ResEmailID), or an answerable member — so the list and the CSV export can
+  // never leak unrelated cases.
   if (Number(user.UserType) === 2) {
     const respEmail = String(user.Email || '').trim().toLowerCase();
+    params.ownUserId = Number(user.UserID);
+    const ownCases = [`t.UserID=@ownUserId`];
     if (respEmail) {
-      conds.push(`t.CompID IN (
+      ownCases.push(`t.CompID IN (
           SELECT CompID FROM tbl_AnswerableMember WHERE LOWER(LTRIM(RTRIM(MemEmailID)))=@respEmail
           UNION
           SELECT CompID FROM tbl_NewComplaint WHERE LOWER(LTRIM(RTRIM(ResEmailID)))=@respEmail AND (IsTemp IS NULL OR IsTemp=0))`);
       params.respEmail = respEmail;
     }
+    conds.push(`(${ownCases.join(' OR ')})`);
   }
   // Non-member / member complainants (UserType 3) must never see the internal
   // list or CSV export of cases they did not file. The frontend already sends
@@ -187,11 +190,13 @@ function buildListQuery(filters, user) {
   if (respondentFor) {
     // Complaints where the logged-in party is the respondent (ResEmailID) or an
     // answerable member — so respondents can see their cases after logging in.
-    conds.push(`t.CompID IN (
+    const ownCase = Number(user.UserType) === 2 ? ' OR t.UserID=@ownUserId' : '';
+    conds.push(`(t.CompID IN (
         SELECT CompID FROM tbl_AnswerableMember WHERE LOWER(LTRIM(RTRIM(MemEmailID)))=@respEmail
         UNION
-        SELECT CompID FROM tbl_NewComplaint WHERE LOWER(LTRIM(RTRIM(ResEmailID)))=@respEmail)`);
+        SELECT CompID FROM tbl_NewComplaint WHERE LOWER(LTRIM(RTRIM(ResEmailID)))=@respEmail)${ownCase})`);
     params.respEmail = String(respondentFor).trim().toLowerCase();
+    if (Number(user.UserType) === 2) params.ownUserId = Number(user.UserID);
   }
   if (search) {
     const like = `%${String(search).trim()}%`;
@@ -2288,9 +2293,10 @@ router.post('/', async (req, res) => {
     const userId = req.user.UserID;
     const year = new Date().getFullYear();
     const userType = Number(req.user.UserType);
-    // Respondents (UserType 2) reply to cases; they cannot file a complaint.
-    if (![1, 3, 4].includes(userType)) {
-      return res.status(403).json({ error: 'Respondent accounts cannot file a complaint' });
+    // Only the parties (complainant / respondent) and the internal staff file
+    // complaints; other internal roles work on the cases assigned to them.
+    if (![1, 2, 3, 4].includes(userType)) {
+      return res.status(403).json({ error: 'Your account is not allowed to file a complaint' });
     }
     // A preview is persisted as a draft (IsTemp=1). Drafts are hidden from the
     // complaint register and are NOT auto-assigned to an SO; assignment happens
