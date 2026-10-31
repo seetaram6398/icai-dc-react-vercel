@@ -14,7 +14,7 @@ const ROLE_LABELS = {
   8: 'Regulator',
   10: 'RO',
   11: 'CAE',
-  13: 'Working Officer',
+  13: 'Vetting Officer',
 };
 
 const PAGE_LABELS = {

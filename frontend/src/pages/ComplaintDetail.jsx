@@ -113,7 +113,7 @@ const DESIGNATIONS = {
   8: 'Regulator, Disciplinary Directorate, ICAI',
   10: 'Reporting Officer, Disciplinary Directorate, ICAI',
   11: 'Chief Accounting Examiner, Disciplinary Directorate, ICAI',
-  13: 'Working Officer, Disciplinary Directorate, ICAI',
+  13: 'Vetting Officer, Disciplinary Directorate, ICAI',
 };
 
 function DetailRow({ label, value }) {
@@ -158,10 +158,9 @@ const WORKFLOW_PANELS = [
     statuses: [16],
     icon: 'bi-file-earmark-text',
     title: 'Written Statement Submitted by the Respondent',
-    caption: 'The respondent has submitted the written statement. Seek a rejoinder or assign an officer.',
+    caption: 'The respondent has submitted the written statement. Seek a rejoinder from the complainant.',
     controls: [
       { label: 'Call for Rejoinder', statusId: 22, attach: true },
-      { label: 'Assign To Officer', statusId: 27, user: 'officer' },
     ],
   },
   {
@@ -1311,15 +1310,14 @@ function AdditionalDocumentRequestCard({ compId, c, onRefresh }) {
   const [busy, setBusy] = useState(false);
 
   const answerable = c.answerable || [];
-  // In a firm complaint the answerable members act as the respondent, so the
-  // respondent option stays available even without a single ResEmailID.
-  const hasRespondent =
-    !!String(c.ResEmailID || '').trim() || (Number(c.IsFirm) === 1 && answerable.length > 0);
+  // An answerable member needs a login email to be able to furnish a document.
+  const answerableCount = answerable.filter((m) => m.MemEmailID && String(m.MemEmailID).trim()).length;
+  const hasRespondent = !!String(c.ResEmailID || '').trim();
   const available = AD_PARTY_OPTIONS.filter(
     (o) =>
       (o.key === 'complainant' && c.UserID) ||
       (o.key === 'respondent' && hasRespondent) ||
-      (o.key === 'thirdparty' && answerable.length > 0)
+      (o.key === 'thirdparty' && answerableCount > 0)
   );
 
   const toggleParty = (key) =>
@@ -1405,7 +1403,7 @@ function AdditionalDocumentRequestCard({ compId, c, onRefresh }) {
                 </label>
               ))}
             </div>
-            {PartyAvailabilityNote(hasRespondent, answerable.length)}
+            {PartyAvailabilityNote(hasRespondent, answerableCount)}
           </div>
           <div className="mb-3">
             <label className="form-label small fw-semibold">Query letter (PDF, max 20 MB) <span className="text-danger">*</span></label>
@@ -1798,7 +1796,7 @@ export default function ComplaintDetail() {
     setScSheet({});
   };
 
-  // DC Flow #104/#123: the Working Officer (WO) reviews the SO's recommendation.
+  // DC Flow #104/#123: the Vetting Officer (VO) reviews the SO's recommendation.
   //   Agree    -> Status 5 (Recommendation to DD) - the DD decides Agree/Disagree.
   //   Disagree -> Status 2 (Scrutiny) back to the SO for further action.
   const submitWO = async (e) => {
@@ -1952,7 +1950,7 @@ export default function ComplaintDetail() {
        return;
      }
      if (soAction === 'recommendDD' && woMembers.length === 0) {
-       popup.warning('No Working Officer (WO) account found. Please create a WO user (UserType 13).');
+       popup.warning('No Vetting Officer (VO) account found. Please create a VO user (UserType 13).');
        return;
      }
     if (soFile) {
@@ -2054,7 +2052,7 @@ export default function ComplaintDetail() {
   };
 
   // Status 5 - the Director Discipline decides on the recommendation forwarded
-  // by the Working Officer (DC Flow #103/#104/#123). The decision is driven by
+  // by the Vetting Officer (DC Flow #103/#104/#123). The decision is driven by
   // the recommendation type chosen by the SO/WO:
   //   Registration              -> Agree registration (status 50) or send it back
   //                                to the SO (status 2).
@@ -2256,7 +2254,7 @@ export default function ComplaintDetail() {
     // UserID = the officer who sent it back (usually the DD) and UserToID = the
     // SO it was returned to, so the SO is the assignee. When the case has not
     // yet come back, fall back to the recommending SO on the status-124 row
-    // (UserID = SO, UserToID = Working Officer).
+    // (UserID = SO, UserToID = Vetting Officer).
     const history = c.statusHistory || [];
     const latestScrutiny = history
       .filter((h) => Number(h.StatusID) === 2 && h.UserToID)
@@ -2411,21 +2409,7 @@ export default function ComplaintDetail() {
   // Additional document - who it was called for from and who is still to
   // furnish it. The complaint waits at status 51 until everyone has submitted.
   const adRequest = c.additionalDocumentRequest || null;
-  const adPendingForViewer = !!(
-    adRequest &&
-    viewerRole &&
-    ((adRequest.Pending || []).includes(viewerRole) ||
-      (adRequest.ViewerCanSubmit && !adRequest.ViewerSubmitted))
-  );
-  // A member of a firm acts as the respondent when the document was called for
-  // from the respondent, so label the submission card accordingly.
-  const adViewerRole =
-    viewerRole === 'thirdparty' &&
-    Number(c.IsFirm) === 1 &&
-    (adRequest?.RequestedFrom || []).includes('respondent') &&
-    !(adRequest?.RequestedFrom || []).includes('thirdparty')
-      ? 'respondent'
-      : viewerRole;
+  const adPendingForViewer = !!(adRequest && viewerRole && (adRequest.Pending || []).includes(viewerRole));
   // Rule 5(4) - the complainant and the respondent only get to see the
   // complaint numbers of the complaints clubbed / closed with their complaint.
   // Every other detail of those complaints stays hidden from them. The first
@@ -3854,7 +3838,7 @@ export default function ComplaintDetail() {
                   </div>
                 )}
                 <p className="small text-muted mb-3">
-                  Recommendation forwarded by the Working Officer: <strong>{soRecType}</strong>.
+                  Recommendation forwarded by the Vetting Officer: <strong>{soRecType}</strong>.
                 </p>
                 {rule54TextFor(soRecType) && (
                   <div className="alert alert-light border small mb-3">
@@ -4008,7 +3992,7 @@ export default function ComplaintDetail() {
               <div className="card-header">
                 <div className="card-title">
                   <i className="bi bi-person-check" />
-                  Working Officer - {soRecType} Recommendation
+                  Vetting Officer - {soRecType} Recommendation
                 </div>
               </div>
               <div className="card-body">
@@ -4194,9 +4178,9 @@ export default function ComplaintDetail() {
               here. The complaint waits until every requested party has submitted. */}
           {viewerRole && adRequest && Number(c.StatusID) === 51 && (
             adRequest.ViewerSubmitted ? (
-              <AdditionalDocumentSubmittedCard role={adViewerRole} />
+              <AdditionalDocumentSubmittedCard role={viewerRole} />
             ) : adPendingForViewer ? (
-              <AdditionalDocumentCard compId={id} c={c} onRefresh={reload} role={adViewerRole} />
+              <AdditionalDocumentCard compId={id} c={c} onRefresh={reload} role={viewerRole} />
             ) : null
           )}
 

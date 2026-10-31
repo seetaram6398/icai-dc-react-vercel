@@ -102,7 +102,7 @@ export const INITIAL_WITHDRAWAL_STATUSES = [1, 2, 3, 4];
 
 // From "Rejoinder sought from the Complainant" (status 22) onwards the case has
 // advanced too far for a fresh letter of withdrawal. Status 124 (recommendation
-// to the Working Officer) is an early scrutiny status despite its numeric id.
+// to the Vetting Officer) is an early scrutiny status despite its numeric id.
 export const WITHDRAWAL_BLOCKED_FROM_STATUS = 22;
 export const WITHDRAWAL_EARLY_STATUSES = [124];
 

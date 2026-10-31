@@ -3,7 +3,7 @@
  *
  * Internal staff (UserType 1 - Admin, 4 - DD, 5 - SO, 6 - BOD, 7 - Officer,
  * 8 - Committee, 9 - Suo Moto, 10 - Reporting Officer, 12 - Appellate Authority,
- * 13 - Working Officer) work on a complaint together: every document attached
+ * 13 - Vetting Officer) work on a complaint together: every document attached
  * by one department has to be visible to the others.
  *
  * The parties to a complaint - the complainant (UserType 3), the respondent and
@@ -104,10 +104,11 @@ function filterHistoryForParty(history, user, role) {
     }
     if (!allowed.includes(statusId)) return false;
     // The additional-document request (status 51) is only shown to the parties
-    // it was actually raised against.
+    // it was actually raised against. A legacy request carries no party list and
+    // was always made to the Complainant.
     if (statusId === 51) {
-      const requested = parseAdRequest(row.CommonField);
-      if (requested && !requested.includes(role)) return false;
+      const requested = parseAdRequest(row.CommonField) || ['complainant'];
+      if (!requested.includes(role)) return false;
     }
     // Status 59 moves the case to SO after documents are collected; the
     // respondent shouldn't see an internal assignment/status issued by/for staff.
@@ -188,7 +189,11 @@ function buildAdRequestState(history, answerable) {
     // marker - the status itself tells which party has furnished the document.
     const submitted = parseAdSubmit(row.CommonField) || [SUBMIT_STATUS_PARTY[Number(row.StatusID)]].filter(Boolean);
     submitted.forEach((p) => submittedBy.add(p));
-    if (row.ByUserEmail) submittedEmails.add(lower(row.ByUserEmail));
+    // The members of a firm are matched by email, so only count an email when
+    // the row was actually filed as the third party.
+    if (submitted.includes('thirdparty') && row.ByUserEmail) {
+      submittedEmails.add(lower(row.ByUserEmail));
+    }
   }
 
   // The third party is the set of answerable members of the complaint - every
@@ -236,9 +241,11 @@ function viewerHasSubmitted(history, role, user, afterCompStatusId) {
     if (after && Number(row.CompStatusID) <= after) return false;
     if (![52, 131, 132].includes(Number(row.StatusID))) return false;
     const submitted = parseAdSubmit(row.CommonField) || [SUBMIT_STATUS_PARTY[Number(row.StatusID)]].filter(Boolean);
-    // A member may have furnished the document as the respondent of a firm, so
-    // any submission by that member's email already counts as theirs.
-    if (role === 'thirdparty') return lower(row.ByUserEmail) === email && !!email;
+    // A member may furnish the document as the third party / answerable member;
+    // match the submission by the member's email.
+    if (role === 'thirdparty') {
+      return submitted.includes('thirdparty') && lower(row.ByUserEmail) === email && !!email;
+    }
     if (!submitted.includes(role)) return false;
     return Number(row.UserID) === userId;
   });

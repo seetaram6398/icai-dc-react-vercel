@@ -71,10 +71,11 @@ function canViewStatusAttachment(user, row, complaint, answerable) {
   const statusId = Number(row.StatusID);
   if (!allowed.includes(statusId)) return false;
   // The additional-document request (status 51) is only shown to the parties
-  // it was actually raised against.
+  // it was actually raised against. A legacy request carries no party list and
+  // was always made to the Complainant.
   if (statusId === 51) {
-    const requested = parseAdRequest(row.CommonField);
-    if (requested && !requested.includes(role)) return false;
+    const requested = parseAdRequest(row.CommonField) || ['complainant'];
+    if (!requested.includes(role)) return false;
   }
   return true;
 }
