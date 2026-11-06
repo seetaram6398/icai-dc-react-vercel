@@ -10,6 +10,9 @@ const {
   ensureAnswerableUsersForComplaint,
 } = require('../services/respondent');
 const { statusText } = require('../utils/statusText');
+const { writeAudit, diffRows } = require('../services/audit');
+const { generateWsLetterPdf, generateRejoinderLetterPdf, saveGeneratedLetter } = require('../services/letterPdf');
+const { sendMail } = require('../services/mailer');
 const {
   isInternalUser,
   resolvePartyRole,
@@ -20,6 +23,7 @@ const {
   viewerHasSubmitted,
   AD_PARTIES,
 } = require('../services/complaintAccess');
+const { findPartyActionPendingIds } = require('../services/partyActions');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -101,6 +105,46 @@ async function resolveFixedSO() {
   return rows.length ? Number(rows[0].UserID) : null;
 }
 
+// Resolve the Working / Vetting Officer who receives the SO's recommendation.
+//  1) FIXED_WO_EMAIL in .env wins.
+//  2) Otherwise the first active UserType 13 account (the WO role).
+async function resolveFixedWO() {
+  const fixedEmail = (process.env.FIXED_WO_EMAIL || '').trim().toLowerCase();
+  let rows = null;
+  if (fixedEmail) {
+    rows = await query(
+      'SELECT UserID FROM tbl_Users WHERE UserType=13 AND LOWER(LTRIM(RTRIM(Email)))=@email AND IsDeactivated=0',
+      { email: fixedEmail }
+    );
+  }
+  if (!rows || rows.length === 0) {
+    rows = await query(
+      'SELECT TOP 1 UserID FROM tbl_Users WHERE UserType=13 AND IsDeactivated=0 ORDER BY UserID'
+    );
+  }
+  return rows.length ? Number(rows[0].UserID) : null;
+}
+
+// Resolve the Director Discipline who receives the auto-approved recommendation.
+//  1) FIXED_DD_EMAIL in .env wins.
+//  2) Otherwise the first active UserType 4 account.
+async function resolveFixedDD() {
+  const fixedEmail = (process.env.FIXED_DD_EMAIL || '').trim().toLowerCase();
+  let rows = null;
+  if (fixedEmail) {
+    rows = await query(
+      'SELECT UserID FROM tbl_Users WHERE UserType=4 AND LOWER(LTRIM(RTRIM(Email)))=@email AND IsDeactivated=0',
+      { email: fixedEmail }
+    );
+  }
+  if (!rows || rows.length === 0) {
+    rows = await query(
+      'SELECT TOP 1 UserID FROM tbl_Users WHERE UserType=4 AND IsDeactivated=0 ORDER BY UserID'
+    );
+  }
+  return rows.length ? Number(rows[0].UserID) : null;
+}
+
 // Build shared complaint-list SQL mirroring the ASPX filter pages.
 // RO (Reporting Officer) default view matches ViewComplaintReportingOfficer.aspx:
 // complaints at StatusID 49 that are assigned to this RO (status 49/54/57),
@@ -109,7 +153,7 @@ async function resolveFixedSO() {
 // then all filters are applied on the deduped set — exactly like the dashboard —
 // so Dashboard counts always match what the complaint window displays.
 function buildListQuery(filters, user) {
-  const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo } = filters;
+  const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, compIds } = filters;
   let sqlStr = `
       SELECT CompID, CompNo, ResName, FirmNo, IsFirm, EntryDate, StatusID,
              StatusName, CompTypeName, ComplainantName, DaysSinceEntry,
@@ -198,6 +242,17 @@ function buildListQuery(filters, user) {
     params.respEmail = String(respondentFor).trim().toLowerCase();
     if (Number(user.UserType) === 2) params.ownUserId = Number(user.UserID);
   }
+  if (compIds) {
+    if (!compIds.length) {
+      conds.push('1=0');
+    } else {
+      const keys = compIds.map((id, i) => {
+        params[`cid${i}`] = Number(id);
+        return `@cid${i}`;
+      });
+      conds.push(`t.CompID IN (${keys.join(',')})`);
+    }
+  }
   if (search) {
     const like = `%${String(search).trim()}%`;
     conds.push(`(t.Name LIKE @search OR t.EmailID LIKE @search OR t.MobileNo LIKE @search
@@ -258,11 +313,12 @@ async function resolveSOFromStatement(compId) {
  */
 router.get('/', async (req, res) => {
   try {
-    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo } = req.query;
-    const { sqlStr, params } = buildListQuery(
-      { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo },
-      req.user
-    );
+    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending } = req.query;
+    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo };
+    if (actionPending === '1' || actionPending === 'true') {
+      filters.compIds = await findPartyActionPendingIds(req.user);
+    }
+    const { sqlStr, params } = buildListQuery(filters, req.user);
     const rows = await query(sqlStr, params);
     res.json(rows);
   } catch (e) {
@@ -277,11 +333,12 @@ router.get('/', async (req, res) => {
  */
 router.get('/export', async (req, res) => {
   try {
-    const { statusIds, assignedTo, complainantId, search, dateFrom, dateTo } = req.query;
-    const { sqlStr, params } = buildListQuery(
-      { statusIds, assignedTo, complainantId, search, dateFrom, dateTo },
-      req.user
-    );
+    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending } = req.query;
+    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo };
+    if (actionPending === '1' || actionPending === 'true') {
+      filters.compIds = await findPartyActionPendingIds(req.user);
+    }
+    const { sqlStr, params } = buildListQuery(filters, req.user);
     const rows = await query(sqlStr, params);
 
     const header = [
@@ -922,11 +979,12 @@ router.get('/:id', async (req, res) => {
     const schedules = await query('SELECT * FROM tbl_ScheduleList WHERE CompID=@id', { id });
     const statusHistory = await query(
       `SELECT cs.*, sm.StatusName, u.NameOfTheUser AS ByUserName, u.UserType AS ByUserType,
-              u.Email AS ByUserEmail
+              u.Email AS ByUserEmail, tu.NameOfTheUser AS ToUserName, tu.UserType AS ToUserType
        FROM tbl_ComplaintStatus cs
        INNER JOIN tbl_StatusMaster sm ON cs.StatusID = sm.StatusID
        LEFT JOIN tbl_Users u ON cs.UserID = u.UserID
-       WHERE cs.CompaintID=@id ORDER BY cs.StatusDate DESC`,
+       LEFT JOIN tbl_Users tu ON cs.UserToID = tu.UserID
+       WHERE cs.CompaintID=@id ORDER BY cs.StatusDate DESC, cs.CompStatusID DESC`,
       { id }
     );
     // Latest approved PER date (status 25) used for "5 days since PER" displays
@@ -1113,7 +1171,7 @@ router.put('/:id/similar', async (req, res) => {
     if (list.includes(id)) {
       return res.status(400).json({ error: 'A complaint cannot be marked similar to itself' });
     }
-    const selfRow = await query('SELECT ClubbedWithCompID, StatusID FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    const selfRow = await query('SELECT CompNo, ClubbedWithCompID, StatusID FROM tbl_NewComplaint WHERE CompID=@id', { id });
     if (selfRow.length && (selfRow[0].ClubbedWithCompID || [13,14,66,68,69,123,130].includes(Number(selfRow[0].StatusID)))) {
       return res.status(400).json({ error: 'This complaint cannot be marked similar as it is already clubbed/closed' });
     }
@@ -1177,9 +1235,52 @@ router.put('/:id/similar', async (req, res) => {
       }
     }
 
+    await writeAudit(req, {
+      compId: id,
+      compNo: selfRow.length ? selfRow[0].CompNo : null,
+      action: 'SIMILAR_COMPLAINTS_LINKED',
+      entity: 'COMPLAINT',
+      entityId: id,
+      oldValues: { ClubbedWithCompID: selfRow.length ? selfRow[0].ClubbedWithCompID : null },
+      newValues: { SimilarCompIDs: list, PrimaryCompID: primary || null, SyncedToStatus: primary || null },
+      details: `Marked similar to ${list.join(', ')}; primary previous complaint ${primary || 'none'}.`,
+    });
     res.json({ message: 'Similar complaints updated', syncedTo: primary || null });
   } catch (e) {
     console.error('update similar error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/complaints/:id/answerable-options
+ * Previously added answerable members of the same firm, so the firm can assign
+ * an existing person to a new complaint instead of entering the details again.
+ */
+router.get('/:id/answerable-options', async (req, res) => {
+  try {
+    const compId = Number(req.params.id);
+    const firmRow = await query('SELECT FirmNo, IsFirm FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
+    if (firmRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
+    if (Number(firmRow[0].IsFirm) !== 1 || !firmRow[0].FirmNo) return res.json([]);
+
+    const rows = await query(
+      `SELECT * FROM (
+         SELECT am.*,
+                ROW_NUMBER() OVER (
+                  PARTITION BY LOWER(LTRIM(RTRIM(ISNULL(NULLIF(am.MemRegistrationNo, ''), am.MemEmailID))))
+                  ORDER BY am.AMemID DESC
+                ) AS rn
+         FROM tbl_AnswerableMember am
+         WHERE LOWER(LTRIM(RTRIM(am.FirmNo))) = LOWER(LTRIM(RTRIM(@firmNo)))
+       ) t
+       WHERE rn = 1
+       ORDER BY MemName`,
+      { firmNo: firmRow[0].FirmNo }
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('answerable options error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1199,7 +1300,7 @@ router.post('/:id/answerable', async (req, res) => {
     const b = req.body;
     const userId = req.user.UserID;
 
-    const firmRow = await query('SELECT IsFirm, FirmNo FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
+    const firmRow = await query('SELECT CompNo, IsFirm, FirmNo FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
     if (firmRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
     if (Number(firmRow[0].IsFirm) !== 1) {
       return res.status(400).json({ error: 'Answerable members can only be added for firm complaints' });
@@ -1256,6 +1357,7 @@ router.post('/:id/answerable', async (req, res) => {
       }
     );
     const amemId = result[0]?.AMemID;
+    await executeNonQuery('UPDATE tbl_NewComplaint SET IsAnswerable=1 WHERE CompID=@id', { id: Number(compId) });
 
     // Answerable members act as the respondents of a firm complaint, so give
     // each of them a UserType-2 login account immediately.
@@ -1268,6 +1370,16 @@ router.post('/:id/answerable', async (req, res) => {
     });
 
     const created = await query('SELECT * FROM tbl_AnswerableMember WHERE AMemID=@id', { id: amemId });
+    await writeAudit(req, {
+      compId,
+      compNo: firmRow[0].CompNo,
+      action: 'ANSWERABLE_MEMBER_ADDED',
+      entity: 'ANSWERABLE_MEMBER',
+      entityId: amemId,
+      oldValues: null,
+      newValues: { MemName: memName, MemRegistrationNo: memRegNo, MemEmailID: memEmail, IsSenior: 0 },
+      details: `Answerable member ${memName} added.`,
+    });
     res.json(created[0] || { AMemID: amemId });
   } catch (e) {
     console.error('add answerable error:', e);
@@ -1281,10 +1393,35 @@ router.post('/:id/answerable', async (req, res) => {
  */
 router.delete('/:id/answerable/:amemId', async (req, res) => {
   try {
+    const compId = Number(req.params.id);
+    const amemId = Number(req.params.amemId);
+    const before = await query(
+      `SELECT am.*, nc.CompNo FROM tbl_AnswerableMember am
+       LEFT JOIN tbl_NewComplaint nc ON am.CompID = nc.CompID
+       WHERE am.AMemID=@amemId AND am.CompID=@compId`,
+      { amemId, compId }
+    );
     await executeNonQuery('DELETE FROM tbl_AnswerableMember WHERE AMemID=@amemId AND CompID=@compId', {
-      amemId: Number(req.params.amemId),
-      compId: Number(req.params.id),
+      amemId,
+      compId,
     });
+    const remaining = await query('SELECT COUNT(*) AS cnt FROM tbl_AnswerableMember WHERE CompID=@id', { id: compId });
+    await executeNonQuery('UPDATE tbl_NewComplaint SET IsAnswerable=@flag WHERE CompID=@id', {
+      flag: Number(remaining[0]?.cnt || 0) > 0 ? 1 : 0,
+      id: compId,
+    });
+    if (before.length) {
+      await writeAudit(req, {
+        compId,
+        compNo: before[0].CompNo,
+        action: 'ANSWERABLE_MEMBER_REMOVED',
+        entity: 'ANSWERABLE_MEMBER',
+        entityId: amemId,
+        oldValues: { MemName: before[0].MemName, MemRegistrationNo: before[0].MemRegistrationNo, MemEmailID: before[0].MemEmailID },
+        newValues: null,
+        details: `Answerable member ${before[0].MemName || amemId} removed.`,
+      });
+    }
     res.json({ message: 'Answerable member removed' });
   } catch (e) {
     console.error('delete answerable error:', e);
@@ -1303,6 +1440,12 @@ router.put('/:id/answerable/:amemId/senior', async (req, res) => {
     const compId = Number(req.params.id);
     const amemId = Number(req.params.amemId);
     const senior = Number(req.body.senior) === 1 ? 1 : 0;
+    const before = await query(
+      `SELECT am.IsSenior, am.MemName, nc.CompNo FROM tbl_AnswerableMember am
+       LEFT JOIN tbl_NewComplaint nc ON am.CompID = nc.CompID
+       WHERE am.AMemID=@amemId AND am.CompID=@compId`,
+      { amemId, compId }
+    );
 
     if (senior === 1) {
       await executeNonQuery('UPDATE tbl_AnswerableMember SET IsSenior=0 WHERE CompID=@compId', { compId });
@@ -1312,6 +1455,18 @@ router.put('/:id/answerable/:amemId/senior', async (req, res) => {
       amemId,
       compId,
     });
+    if (before.length) {
+      await writeAudit(req, {
+        compId,
+        compNo: before[0].CompNo,
+        action: 'ANSWERABLE_SIGNATORY_CHANGED',
+        entity: 'ANSWERABLE_MEMBER',
+        entityId: amemId,
+        oldValues: { IsSenior: before[0].IsSenior },
+        newValues: { IsSenior: senior, MemName: before[0].MemName },
+        details: senior ? 'Answerable member marked as signatory.' : 'Answerable signatory removed.',
+      });
+    }
     res.json({ message: senior ? 'Marked as signatory' : 'Signatory removed' });
   } catch (e) {
     console.error('set senior error:', e);
@@ -1358,12 +1513,38 @@ router.post('/:id/respondent-response', async (req, res) => {
     // (or their firm's answerable members) can keep accessing the case later.
     await ensureRespondentUserForComplaint(compId);
 
-    const compRow = await query('SELECT IsFirm, StatusID FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
+    const compRow = await query('SELECT CompNo, IsFirm, StatusID FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
     if (compRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
     if (Number(compRow[0].StatusID) !== 15) {
       return res.status(409).json({ error: 'The written statement / Rule 12 application can be submitted only when it is sought' });
     }
     const isFirm = Number(compRow[0].IsFirm) === 1;
+
+    // In a firm complaint only the answerable members file the reply, including
+    // the Rule 12 application. The firm login is used to add / assign them.
+    if (isFirm && kind === 'rule12') {
+      const countRow = await query(
+        `SELECT COUNT(DISTINCT LOWER(LTRIM(RTRIM(MemEmailID)))) AS cnt
+         FROM tbl_AnswerableMember
+         WHERE CompID=@id AND MemEmailID IS NOT NULL AND LTRIM(RTRIM(MemEmailID))<>''`,
+        { id: compId }
+      );
+      if (Number(countRow[0].cnt) === 0) {
+        return res.status(400).json({
+          error: 'Please add at least one answerable member before submitting the reply.',
+        });
+      }
+      const memberRow = await query(
+        `SELECT TOP 1 AMemID FROM tbl_AnswerableMember
+         WHERE CompID=@id AND LOWER(LTRIM(RTRIM(MemEmailID)))=@email`,
+        { id: compId, email: String(req.user.Email || '').trim().toLowerCase() }
+      );
+      if (!memberRow.length) {
+        return res.status(403).json({
+          error: 'Only the answerable members of the firm can submit the reply.',
+        });
+      }
+    }
 
     const target = kind === 'written' ? 16 : 63;
 
@@ -1394,6 +1575,11 @@ router.post('/:id/respondent-response', async (req, res) => {
         { id: compId }
       );
       const total = Number(answerable[0].cnt);
+      if (total === 0) {
+        return res.status(400).json({
+          error: 'Please add at least one answerable member before submitting the written statement.',
+        });
+      }
       if (total > 0) {
         const reviewerEmail = String(req.user.Email || '').trim().toLowerCase();
         const memberRow = await query(
@@ -1434,6 +1620,16 @@ router.post('/:id/respondent-response', async (req, res) => {
           { id: compId }
         );
         if (Number(doneRow[0].cnt) < total) {
+          await writeAudit(req, {
+            compId,
+            compNo: compRow[0].CompNo,
+            action: 'RESPONDENT_WRITTEN_STATEMENT',
+            entity: 'COMPLAINT_STATUS',
+            entityId: 16,
+            oldValues: { StatusID: 15 },
+            newValues: { StatusID: 15, Remarks: String(remarks).trim(), Attachment: attachment, PendingMembers: total - Number(doneRow[0].cnt) },
+            details: 'Written statement recorded for one answerable member; awaiting remaining members.',
+          });
           return res.json({
             message: 'Written Statement recorded. Awaiting the remaining answerable members.',
             pending: true,
@@ -1455,6 +1651,19 @@ router.post('/:id/respondent-response', async (req, res) => {
         attachment,
       }
     );
+
+    await writeAudit(req, {
+      compId,
+      compNo: compRow[0].CompNo,
+      action: kind === 'written' ? 'RESPONDENT_WRITTEN_STATEMENT' : 'RESPONDENT_RULE12_APPLICATION',
+      entity: 'COMPLAINT_STATUS',
+      entityId: target,
+      oldValues: { StatusID: 15 },
+      newValues: { StatusID: target, AssignedTo: userToId, Remarks: String(remarks).trim(), Attachment: attachment },
+      details: kind === 'written'
+        ? 'Written statement submitted; routed back to the SO.'
+        : 'Rule-12 application submitted; routed back to the SO.',
+    });
 
     res.json({
       message: kind === 'written' ? 'Submitted Written Statement' : 'Application under rule 12 have been submitted',
@@ -1489,7 +1698,7 @@ router.post('/:id/complainant-rejoinder', async (req, res) => {
       return res.status(400).json({ error: 'Please upload the rejoinder document' });
     }
 
-    const compRow = await query('SELECT StatusID, UserID FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
+    const compRow = await query('SELECT CompNo, StatusID, UserID FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
     if (compRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
     if (Number(compRow[0].UserID) !== userId) {
       return res.status(403).json({ error: 'Only the complainant can submit the rejoinder' });
@@ -1526,6 +1735,17 @@ router.post('/:id/complainant-rejoinder', async (req, res) => {
         attachment,
       }
     );
+
+    await writeAudit(req, {
+      compId,
+      compNo: compRow[0].CompNo,
+      action: 'COMPLAINANT_REJOINDER',
+      entity: 'COMPLAINT_STATUS',
+      entityId: 23,
+      oldValues: { StatusID: 22 },
+      newValues: { StatusID: 23, AssignedTo: userToId, Remarks: String(remarks).trim(), Attachment: attachment },
+      details: 'Complainant rejoinder submitted; routed back to the Scrutiny Officer.',
+    });
 
     res.json({ message: 'Rejoinder submitted. The case has been routed to the Scrutiny Officer for the next stage.' });
   } catch (e) {
@@ -1610,6 +1830,17 @@ router.post('/:id/additional-document-request', async (req, res) => {
         commonField: `ADReq=${requestedFrom.join(';')}`,
       }
     );
+
+    await writeAudit(req, {
+      compId,
+      compNo: compRow[0].CompNo,
+      action: 'ADDITIONAL_DOCUMENT_REQUESTED',
+      entity: 'COMPLAINT_STATUS',
+      entityId: 51,
+      oldValues: { StatusID: compRow[0].StatusID },
+      newValues: { StatusID: 51, RequestedFrom: requestedFrom, Remarks: String(remarks).trim(), Attachment: attachment },
+      details: `Additional document called for from: ${requestedFrom.join(', ')}.`,
+    });
 
     res.json({
       message: 'Query for the additional document sent.',
@@ -1728,6 +1959,16 @@ router.post('/:id/additional-document', async (req, res) => {
     const pending = afterState ? afterState.Pending : [];
 
     if (pending.length) {
+      await writeAudit(req, {
+        compId,
+        compNo: compRow[0].CompNo,
+        action: 'ADDITIONAL_DOCUMENT_SUBMITTED',
+        entity: 'COMPLAINT_STATUS',
+        entityId: submitStatusId,
+        oldValues: { StatusID: 51 },
+        newValues: { StatusID: 51, Party: role, Remarks: String(remarks).trim(), Attachment: attachment, PendingFrom: pending },
+        details: `Additional document submitted by ${role}; awaiting ${pending.join(', ')}.`,
+      });
       return res.json({
         message: 'Additional document submitted. The case awaits the document from the remaining party/parties.',
         pending: true,
@@ -1747,6 +1988,17 @@ router.post('/:id/additional-document', async (req, res) => {
         attachment,
       }
     );
+
+    await writeAudit(req, {
+      compId,
+      compNo: compRow[0].CompNo,
+      action: 'ADDITIONAL_DOCUMENT_SUBMITTED',
+      entity: 'COMPLAINT_STATUS',
+      entityId: 59,
+      oldValues: { StatusID: 51 },
+      newValues: { StatusID: 59, Party: role, AssignedTo: userToId, Remarks: String(remarks).trim(), Attachment: attachment },
+      details: `Additional document submitted by ${role}; all requested parties have furnished it.`,
+    });
 
     res.json({ message: 'Additional document submitted. The case has been routed to the Scrutiny Officer.' });
   } catch (e) {
@@ -1775,6 +2027,10 @@ router.put('/:id', async (req, res) => {
     const existing = await query('SELECT * FROM tbl_NewComplaint WHERE CompID=@id', { id });
     if (existing.length === 0) return res.status(404).json({ error: 'Complaint not found' });
     const cur = existing[0];
+    const compTypeRow = await query('SELECT IsGov FROM tbl_CompType WHERE CompTypeID=@id', {
+      id: b.compTypeId || cur.CompType || 0,
+    });
+    const isGov = compTypeRow.length > 0 && Number(compTypeRow[0].IsGov) === 1;
     const isDraft = b.isDraft === true || b.isDraft === 1 || b.isDraft === '1';
     const wasDraft = Number(cur.IsTemp) === 1;
 
@@ -1834,6 +2090,7 @@ router.put('/:id', async (req, res) => {
          GSTType=@gstType, IsAnswerable=@isAnswerable, Declaration=@declaration, IsAudioVideo=@isAudioVideo,
          EntityMisconduct=@entityMisconduct, isChkSameAddress=@isChkSameAddress,
          NatureOfAllegation=@nature, NatureDatails=@natureDetails,
+         VerificationDate=@verificationDate, VerificationTime=@verificationTime, VerificationPlace=@verificationPlace,
          EntryDate=GETDATE()
        WHERE CompID=@id`,
       {
@@ -1871,8 +2128,8 @@ router.put('/:id', async (req, res) => {
         gstIn: b.gstinNo ?? cur.GSTINNo ?? null,
         instrumentNo: b.instrumentNo ?? cur.InstrumentNo ?? null,
         instrumentDate: b.instrumentDate ?? cur.InstrumentDate ?? null,
-        taxable: b.taxableAmount ?? cur.TaxableAmount ?? null,
-        taxRate: b.taxRate ?? cur.TaxRate ?? null,
+        taxable: isGov ? 0 : b.taxableAmount ?? cur.TaxableAmount ?? null,
+        taxRate: isGov ? 0 : b.taxRate ?? cur.TaxRate ?? null,
         paymentDetails: b.paymentDetails ?? cur.PaymentDetails ?? null,
         stateId: b.stateId ?? cur.StateID ?? null,
         cityId: b.cityId ?? cur.CityID ?? null,
@@ -1911,15 +2168,20 @@ router.put('/:id', async (req, res) => {
         isChkSameAddress: b.isChkSameAddress ? 1 : Number(cur.isChkSameAddress) || 0,
         nature: b.natureOfAllegation ?? cur.NatureOfAllegation ?? null,
         natureDetails: b.natureDetails ?? b.natureOfAllegation ?? cur.NatureDatails ?? null,
+        verificationDate: b.verificationDate || cur.VerificationDate || null,
+        verificationTime: b.verificationTime || cur.VerificationTime || null,
+        verificationPlace: b.verificationPlace || cur.VerificationPlace || null,
       }
     );
+
+    const updatedRow = await query('SELECT * FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    const changes = diffRows(cur, updatedRow[0] || {}, ['EntryDate']);
 
     // ----- Replace nested child records (documents, facts, schedules, answerable, AV) -----
     await executeNonQuery('DELETE FROM tbl_ComplaintDocument WHERE CompID=@id', { id });
     await executeNonQuery('DELETE FROM tbl_FactPersons WHERE CompID=@id', { id });
     await executeNonQuery('DELETE FROM tbl_ScheduleList WHERE CompID=@id', { id });
     await executeNonQuery('DELETE FROM tbl_AnswerableMember WHERE CompID=@id', { id });
-    await executeNonQuery('DELETE FROM tbl_AudioVideoAttachment WHERE ComplaintID=@id', { id });
 
     if (Array.isArray(b.documents)) {
       for (const doc of b.documents) {
@@ -1995,6 +2257,7 @@ router.put('/:id', async (req, res) => {
     }
 
     if (Array.isArray(b.audioVideo)) {
+      await executeNonQuery('DELETE FROM tbl_AudioVideoAttachment WHERE ComplaintID=@id', { id });
       for (const av of b.audioVideo) {
         await executeNonQuery(
           `INSERT INTO tbl_AudioVideoAttachment (ComplaintID, Attachment, EntryDate, UserID)
@@ -2004,7 +2267,17 @@ router.put('/:id', async (req, res) => {
       }
     }
 
+    const isFirmComplaint = b.isFirm === true || b.isFirm === 1 || b.isFirm === '1' || Number(cur.IsFirm) === 1;
+    if (!isDraft && isFirmComplaint) {
+      try {
+        await ensureRespondentUserForComplaint(id);
+      } catch (loginErr) {
+        console.error('firm login creation failed:', loginErr);
+      }
+    }
+
     // ----- Status transitions -----
+
 
     // Preview save: keep the record as a draft. Do not change the status and do
     // not assign it to an SO - that only happens on an actual submit. If the
@@ -2013,6 +2286,21 @@ router.put('/:id', async (req, res) => {
       if (wasDraft) {
         await executeNonQuery('UPDATE tbl_NewComplaint SET IsTemp=1 WHERE CompID=@id', { id });
       }
+      await writeAudit(req, {
+        compId: id,
+        compNo: cur.CompNo,
+        action: 'COMPLAINT_DRAFT_SAVED',
+        entity: 'COMPLAINT',
+        entityId: id,
+        oldValues: { ...changes.oldValues, StatusID: Number(cur.StatusID), IsTemp: Number(cur.IsTemp) },
+        newValues: {
+          ...changes.newValues,
+          StatusID: Number(cur.StatusID),
+          IsTemp: wasDraft ? 1 : Number(cur.IsTemp) || 0,
+          ChangedFields: changes.changed,
+        },
+        details: 'Complaint draft saved.',
+      });
       return res.json({
         message: 'Draft saved',
         CompID: id,
@@ -2041,6 +2329,16 @@ router.put('/:id', async (req, res) => {
           );
         }
         await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=2 WHERE CompID=@id', { id });
+        await writeAudit(req, {
+          compId: id,
+          compNo: cur.CompNo,
+          action: 'COMPLAINT_SUBMITTED',
+          entity: 'COMPLAINT',
+          entityId: id,
+          oldValues: { StatusID: Number(cur.StatusID), IsTemp: 1 },
+          newValues: { StatusID: 2, IsTemp: 0, AssignedTo: fixedSO },
+          details: 'Draft complaint submitted and auto-assigned to the fixed SO.',
+        });
         return res.json({
           message: 'Complaint submitted successfully',
           CompID: id,
@@ -2051,6 +2349,16 @@ router.put('/:id', async (req, res) => {
       }
       // No SO could be resolved: remains Status 1 for manual assignment by the DD.
       await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=1 WHERE CompID=@id', { id });
+      await writeAudit(req, {
+        compId: id,
+        compNo: cur.CompNo,
+        action: 'COMPLAINT_SUBMITTED',
+        entity: 'COMPLAINT',
+        entityId: id,
+        oldValues: { StatusID: Number(cur.StatusID), IsTemp: 1 },
+        newValues: { StatusID: 1, IsTemp: 0, AssignedTo: null },
+        details: 'Draft complaint submitted; no SO resolved so it awaits manual assignment.',
+      });
       return res.json({
         message: 'Complaint submitted successfully',
         CompID: id,
@@ -2077,6 +2385,22 @@ router.put('/:id', async (req, res) => {
       { id, userId, userToId: soUserId }
     );
 
+    await writeAudit(req, {
+      compId: id,
+      compNo: cur.CompNo,
+      action: 'COMPLAINT_MODIFIED',
+      entity: 'COMPLAINT',
+      entityId: id,
+      oldValues: { ...changes.oldValues, StatusID: Number(cur.StatusID) },
+      newValues: {
+        ...changes.newValues,
+        StatusID: 4,
+        AssignedTo: soUserId,
+        ChangedFields: changes.changed,
+      },
+      details: 'Defect-returned complaint modified and resubmitted to the SO.',
+    });
+
     res.json({ message: 'Complaint updated and resubmitted successfully', StatusID: 4 });
   } catch (e) {
     console.error('update complaint error:', e);
@@ -2091,7 +2415,8 @@ router.put('/:id', async (req, res) => {
  * Mirrors ASPX btnMisconductAlleged_Click + btnSaveNatureOfAllegation_Click
  * (both write to tbl_NewComplaint). Only the fields provided are updated, so a
  * sheet-only save does not wipe previously entered scrutiny details.
- * Body: { entityMisconduct?, natureOfAllegation?, natureDetails?, scrutinySheet? }
+ * Body: { entityMisconduct?, natureOfAllegation?, natureDetails?, scrutinySheet?,
+ *         isAudioVideo?, audioVideo?, digitalEvidenceCert? }
  */
 router.put('/:id/scrutiny', async (req, res) => {
   try {
@@ -2103,6 +2428,16 @@ router.put('/:id/scrutiny', async (req, res) => {
       req.body.scrutinySheet !== undefined && req.body.scrutinySheet !== null
         ? JSON.stringify(req.body.scrutinySheet)
         : null;
+    const audioVideo = Array.isArray(req.body.audioVideo) ? req.body.audioVideo : null;
+    const digitalEvidenceCert =
+      req.body.digitalEvidenceCert !== undefined && req.body.digitalEvidenceCert !== null
+        ? String(req.body.digitalEvidenceCert).trim()
+        : null;
+
+    const beforeScrutiny = await query(
+      'SELECT CompNo, EntityMisconduct, NatureOfAllegation, NatureDatails FROM tbl_NewComplaint WHERE CompID=@id',
+      { id }
+    );
 
     const sets = [];
     const p = { id };
@@ -2118,6 +2453,11 @@ router.put('/:id/scrutiny', async (req, res) => {
       sets.push('NatureDatails=@natureDetails');
       p.natureDetails = natureDetails;
     }
+    if (audioVideo !== null || req.body.isAudioVideo !== undefined) {
+      const hasAudio = (audioVideo && audioVideo.length > 0) || Number(req.body.isAudioVideo) === 1;
+      sets.push('IsAudioVideo=@isAudioVideo');
+      p.isAudioVideo = hasAudio ? '1' : '0';
+    }
     if (scrutinySheet !== null) {
       sets.push('ScrutinySheet=@sheet');
       p.sheet = scrutinySheet;
@@ -2129,6 +2469,57 @@ router.put('/:id/scrutiny', async (req, res) => {
       `UPDATE tbl_NewComplaint SET ${sets.join(', ')} WHERE CompID=@id`,
       p
     );
+
+    if (audioVideo !== null) {
+      await executeNonQuery('DELETE FROM tbl_AudioVideoAttachment WHERE ComplaintID=@id', { id });
+      for (const av of audioVideo) {
+        const attachment = av.attachment || av.path || null;
+        if (!attachment) continue;
+        await executeNonQuery(
+          `INSERT INTO tbl_AudioVideoAttachment (ComplaintID, Attachment, EntryDate, UserID)
+           VALUES (@compId, @attachment, GETDATE(), @userId)`,
+          { compId: id, attachment, userId: req.user?.UserID || null }
+        );
+      }
+    }
+
+    if (digitalEvidenceCert !== null) {
+      await executeNonQuery(
+        `DELETE FROM tbl_ComplaintDocument WHERE CompID=@id AND DocumentID=@docId`,
+        { id, docId: 'Digital Evidence Certificate' }
+      );
+      if (digitalEvidenceCert) {
+        await executeNonQuery(
+          `INSERT INTO tbl_ComplaintDocument (CompID, DocumentID, DocURL, EntryDate)
+           VALUES (@id, @docId, @docUrl, GETDATE())`,
+          { id, docId: 'Digital Evidence Certificate', docUrl: digitalEvidenceCert }
+        );
+      }
+    }
+
+    const beforeS = beforeScrutiny[0] || {};
+    await writeAudit(req, {
+      compId: id,
+      compNo: beforeS.CompNo,
+      action: 'SCRUTINY_SAVED',
+      entity: 'COMPLAINT',
+      entityId: id,
+      oldValues: {
+        EntityMisconduct: beforeS.EntityMisconduct ?? null,
+        NatureOfAllegation: beforeS.NatureOfAllegation ?? null,
+        NatureDatails: beforeS.NatureDatails ?? null,
+      },
+      newValues: {
+        EntityMisconduct: entityMisconduct || beforeS.EntityMisconduct || null,
+        NatureOfAllegation: natureOfAllegation || beforeS.NatureOfAllegation || null,
+        NatureDatails: natureDetails || beforeS.NatureDatails || null,
+        ScrutinySheetUpdated: scrutinySheet !== null,
+        IsAudioVideo: audioVideo !== null ? (audioVideo.length > 0 ? '1' : '0') : undefined,
+        AudioVideoCount: audioVideo !== null ? audioVideo.length : undefined,
+        DigitalEvidenceCertificate: digitalEvidenceCert || undefined,
+      },
+      details: 'SO scrutiny details saved.',
+    });
     res.json({ message: 'Scrutiny details saved' });
   } catch (e) {
     console.error('save scrutiny error:', e);
@@ -2149,6 +2540,25 @@ router.post('/:id/status', async (req, res) => {
     const id = req.params.id;
     const { statusId, remarks, userToId, attachment, commonField, extensionTime, decisionValue, clubbedWithCompId, clubRule } = req.body;
     const userId = req.user.UserID;
+
+    const beforeRow = await query(
+      'SELECT CompID, CompNo, StatusID, ClubbedWithCompID, ClubRule FROM tbl_NewComplaint WHERE CompID=@id',
+      { id }
+    );
+    if (!beforeRow.length) return res.status(404).json({ error: 'Complaint not found' });
+    const compNo = beforeRow[0].CompNo;
+    const oldStatusId = Number(beforeRow[0].StatusID);
+    const oldClubbedWith = beforeRow[0].ClubbedWithCompID ?? null;
+    const oldClubRule = beforeRow[0].ClubRule ?? null;
+
+    const isAutoForward = Number(statusId) === 124;
+    const effectiveStatusId = isAutoForward ? 5 : Number(statusId);
+    let woUserId = null;
+    let ddUserId = null;
+    if (isAutoForward) {
+      woUserId = await resolveFixedWO();
+      ddUserId = await resolveFixedDD();
+    }
 
     // Rule 5(4): link / unlink the previous complaint the Director is acting on.
     if (clubbedWithCompId !== undefined) {
@@ -2211,9 +2621,10 @@ router.post('/:id/status', async (req, res) => {
       'SELECT TOP 1 CompStatusID, StatusID FROM tbl_ComplaintStatus WHERE CompaintID=@id ORDER BY CompStatusID DESC',
       { id }
     );
-    const alreadyParked = latestRow.length && Number(latestRow[0].StatusID) === Number(statusId);
+    const alreadyParked = latestRow.length && Number(latestRow[0].StatusID) === effectiveStatusId;
 
     if (alreadyParked) {
+      const parkedUserToId = isAutoForward ? ddUserId : (userToId || null);
       await executeNonQuery(
         `UPDATE tbl_ComplaintStatus
            SET UserToID=@userToId,
@@ -2223,7 +2634,7 @@ router.post('/:id/status', async (req, res) => {
                ExtensionTime=COALESCE(@extensionTime, ExtensionTime)
          WHERE CompStatusID=@csid`,
         {
-          userToId: userToId || null,
+          userToId: parkedUserToId,
           remarks: remarks || null,
           attachment: attachment || null,
           commonField: commonField || null,
@@ -2231,31 +2642,190 @@ router.post('/:id/status', async (req, res) => {
           csid: Number(latestRow[0].CompStatusID),
         }
       );
-      res.json({ message: 'Status updated', updated: true });
+      await writeAudit(req, {
+        compId: id,
+        compNo,
+        action: isAutoForward ? 'WO_AUTO_APPROVAL_ALREADY_CURRENT' : 'STATUS_ALREADY_CURRENT',
+        entity: 'COMPLAINT_STATUS',
+        entityId: latestRow[0].CompStatusID,
+        oldValues: { StatusID: oldStatusId },
+        newValues: { StatusID: effectiveStatusId, UserToID: parkedUserToId, CommonField: commonField || null },
+        details: `Status already at ${effectiveStatusId}; latest history row updated.`,
+      });
+      res.json({
+        message: isAutoForward
+          ? 'Recommendation is already with the Director Discipline (auto-approved by the Working Officer).'
+          : 'Status updated',
+        updated: true,
+      });
       return;
     }
 
-    await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=@s WHERE CompID=@id', { s: statusId, id });
+    // Recommendation to the Working Officer (124) is auto-approved at the WO
+    // level and forwarded straight to the Director Discipline (5). Both history
+    // rows are written so the SO, WO and DD steps remain visible in the trail.
+    let autoAttachment = null;
+    let rejoinderMail = null;
+    if (!isAutoForward && Number(statusId) === 22) {
+      try {
+        const letter = await generateRejoinderLetterPdf(id);
+        autoAttachment = await saveGeneratedLetter(letter.buffer, 'rejoinder-query');
+        rejoinderMail = letter;
+      } catch (letterErr) {
+        console.error('auto rejoinder letter error:', letterErr.message);
+      }
+    }
+    let autoWs = null;
+    const primaryStatusId = isAutoForward ? 124 : Number(statusId);
+    const primaryUserToId = isAutoForward ? woUserId : (userToId || null);
+    await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=@s WHERE CompID=@id', { s: effectiveStatusId, id });
     await executeNonQuery(
       `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment, CommonField, ExtensionTime)
        VALUES (@id, @s, @userId, @userToId, GETDATE(), @remarks, @attachment, @commonField, @extensionTime)`,
       {
         id,
-        s: statusId,
+        s: primaryStatusId,
         userId,
-        userToId: userToId || null,
+        userToId: primaryUserToId,
         remarks: remarks || null,
-        attachment: attachment || null,
+        attachment: attachment || autoAttachment,
         commonField: commonField || null,
         extensionTime: ext,
       }
     );
+    if (isAutoForward) {
+      await executeNonQuery(
+        `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment, CommonField, ExtensionTime)
+         VALUES (@id, 5, @userId, @userToId, DATEADD(second, 1, GETDATE()), @remarks, NULL, @commonField, NULL)`,
+        {
+          id,
+          userId: woUserId || userId,
+          userToId: ddUserId,
+          remarks: 'Auto-approved at the Working Officer level and forwarded to the Director Discipline.',
+          commonField: commonField || null,
+        }
+      );
+    }
+
+    // Registration flow: when the DD agrees (status 50) the written-statement
+    // query is generated from the predefined member / firm template, auto
+    // approved at the SO level (status 15) and e-mailed to the respondent.
+    if (!isAutoForward && Number(statusId) === 50) {
+      try {
+        let soId = userToId ? Number(userToId) : null;
+        if (!soId) {
+          const rec = await query(
+            `SELECT TOP 1 UserID FROM tbl_ComplaintStatus
+             WHERE CompaintID=@id AND StatusID=124 ORDER BY CompStatusID DESC`,
+            { id }
+          );
+          soId = rec.length ? Number(rec[0].UserID) : null;
+        }
+        const letter = await generateWsLetterPdf(id);
+        const filename = await saveGeneratedLetter(letter.buffer, 'ws-query');
+        await executeNonQuery(
+          `INSERT INTO tbl_ComplaintStatus
+             (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment, CommonField)
+           VALUES (@id, 15, @userId, NULL, DATEADD(second, 1, GETDATE()), @remarks, @attachment, 'AutoWS=1')`,
+          {
+            id,
+            userId: soId || userId,
+            remarks: 'Auto-approved at the SO level. Written statement query generated and sent to the respondent.',
+            attachment: filename,
+          }
+        );
+        await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=15 WHERE CompID=@id', { id });
+        autoWs = { sent: true, attachment: filename, toEmail: letter.toEmail };
+
+        let mailed = false;
+        try {
+          mailed = await sendMail(
+            letter.toEmail,
+            `Written Statement sought - Complaint ${letter.compNo || compNo}`,
+            `<p>Dear Sir/Madam,</p>
+             <p>The Disciplinary Directorate has sought your Written Statement in the matter of complaint <b>${letter.compNo || compNo}</b>.</p>
+             <p>The written statement, duly signed in original, is required to be submitted within 21 days of receipt of the attached letter. A copy of the letter is attached herewith.</p>
+             <p>Regards,<br/>ICAI Disciplinary Directorate</p>`,
+            [{ filename: `WS-Query-${letter.compNo || compNo}.pdf`, content: letter.buffer }]
+          );
+        } catch (mailErr) {
+          console.error('auto WS mail error:', mailErr.message);
+        }
+
+        await writeAudit(req, {
+          compId: id,
+          compNo,
+          action: 'WS_QUERY_AUTO_SENT',
+          entity: 'COMPLAINT_STATUS',
+          entityId: 15,
+          oldValues: { StatusID: 50 },
+          newValues: {
+            StatusID: 15,
+            AssignedTo: soId,
+            Attachment: filename,
+            RespondentEmail: letter.toEmail,
+            MailSent: mailed,
+            LetterType: letter.isFirm ? 'FIRM' : 'MEMBER',
+          },
+          details: 'DD agreed to registration; written-statement query auto-generated, auto-approved at SO level, attached and e-mailed to the respondent.',
+        });
+      } catch (letterErr) {
+        console.error('auto WS query error:', letterErr.message);
+        autoWs = { sent: false, error: letterErr.message };
+        await writeAudit(req, {
+          compId: id,
+          compNo,
+          action: 'WS_QUERY_AUTO_FAILED',
+          entity: 'COMPLAINT_STATUS',
+          entityId: 50,
+          oldValues: { StatusID: 50 },
+          newValues: { StatusID: 50, Error: letterErr.message },
+          details: 'DD agreed to registration but the automatic written-statement query could not be generated.',
+        });
+      }
+    }
+
+    // Rejoinder flow: the SO calling for the rejoinder gets the predefined
+    // rejoinder letter attached automatically and the complainant is e-mailed.
+    if (!isAutoForward && Number(statusId) === 22 && rejoinderMail) {
+      let mailed = false;
+      try {
+        mailed = await sendMail(
+          rejoinderMail.toEmail,
+          `Rejoinder sought - Complaint ${rejoinderMail.compNo || compNo}`,
+          `<p>Dear Sir/Madam,</p>
+           <p>The Written Statement filed by the respondent in the matter of complaint <b>${rejoinderMail.compNo || compNo}</b> is enclosed.</p>
+           <p>You are requested to submit your Rejoinder, if any, duly signed, within 21 days of receipt of the attached letter.</p>
+           <p>Regards,<br/>ICAI Disciplinary Directorate</p>`,
+          [{ filename: `Rejoinder-Query-${rejoinderMail.compNo || compNo}.pdf`, content: rejoinderMail.buffer }]
+        );
+      } catch (mailErr) {
+        console.error('auto rejoinder mail error:', mailErr.message);
+      }
+      await writeAudit(req, {
+        compId: id,
+        compNo,
+        action: 'REJOINDER_QUERY_AUTO_SENT',
+        entity: 'COMPLAINT_STATUS',
+        entityId: 22,
+        oldValues: { StatusID: oldStatusId },
+        newValues: {
+          StatusID: 22,
+          AssignedTo: primaryUserToId,
+          Attachment: autoAttachment,
+          ComplainantEmail: rejoinderMail.toEmail,
+          MailSent: mailed,
+        },
+        details: 'Rejoinder query letter generated, attached and e-mailed to the complainant.',
+      });
+    }
+
     if (decisionValue) {
       await executeNonQuery(
         `INSERT INTO tbl_ComplaintSubStatus (StatusID, UserID, Remarks, CompID, Decision, Decisiondate)
          VALUES (@s, @userId, @remarks, @id, @decisionValue, GETDATE())`,
         {
-          s: statusId,
+          s: effectiveStatusId,
           userId,
           remarks: remarks || null,
           id,
@@ -2263,7 +2833,83 @@ router.post('/:id/status', async (req, res) => {
         }
       );
     }
-    res.json({ message: 'Status updated' });
+
+    const linkChanged =
+      clubbedWithCompId !== undefined &&
+      (Number(clubbedWithCompId || 0) || null) !== (Number(oldClubbedWith || 0) || null);
+    if (isAutoForward) {
+      await writeAudit(req, {
+        compId: id,
+        compNo,
+        action: 'SO_RECOMMENDATION',
+        entity: 'COMPLAINT_STATUS',
+        entityId: primaryStatusId,
+        oldValues: { StatusID: oldStatusId },
+        newValues: {
+          StatusID: 124,
+          Recommendation: commonField || null,
+          AssignedTo: woUserId,
+          Remarks: remarks || null,
+          Attachment: attachment || null,
+          ClubbedWithCompID: clubbedWithCompId !== undefined ? (clubbedWithCompId || null) : oldClubbedWith,
+          ClubRule: clubRule || oldClubRule,
+        },
+        details: `SO recommended ${commonField || 'the complaint'} to the Working Officer.`,
+      });
+      await writeAudit(req, {
+        compId: id,
+        compNo,
+        userId: woUserId || userId,
+        userType: woUserId ? 13 : req.user.UserType,
+        action: 'WO_AUTO_APPROVAL',
+        entity: 'COMPLAINT_STATUS',
+        entityId: 5,
+        oldValues: { StatusID: 124 },
+        newValues: {
+          StatusID: 5,
+          Recommendation: commonField || null,
+          AssignedTo: ddUserId,
+          Remarks: 'Auto-approved at the Working Officer level and forwarded to the Director Discipline.',
+        },
+        details: 'Working Officer approval applied automatically; forwarded to Director Discipline.',
+      });
+    } else {
+      await writeAudit(req, {
+        compId: id,
+        compNo,
+        action: 'STATUS_CHANGED',
+        entity: 'COMPLAINT_STATUS',
+        entityId: primaryStatusId,
+        oldValues: { StatusID: oldStatusId, ClubbedWithCompID: oldClubbedWith, ClubRule: oldClubRule },
+        newValues: {
+          StatusID: primaryStatusId,
+          AssignedTo: primaryUserToId,
+          Remarks: remarks || null,
+          Attachment: attachment || autoAttachment,
+          CommonField: commonField || null,
+          ClubbedWithCompID: clubbedWithCompId !== undefined ? (clubbedWithCompId || null) : oldClubbedWith,
+          ClubRule: clubRule || oldClubRule,
+        },
+        details: linkChanged ? 'Status changed and Rule 5(4) complaint link updated.' : 'Status changed.',
+      });
+    }
+
+    let responseMessage = 'Status updated';
+    if (isAutoForward) {
+      responseMessage = 'Recommendation auto-approved by the Working Officer and forwarded to the Director Discipline.';
+    } else if (Number(statusId) === 50) {
+      responseMessage = autoWs && autoWs.sent
+        ? 'Registration agreed. The written-statement query was auto-approved at the SO level, attached and e-mailed to the respondent.'
+        : 'Registration agreed. The automatic written-statement letter could not be generated; please send the query manually.';
+    } else if (Number(statusId) === 22 && autoAttachment) {
+      responseMessage = 'Rejoinder query letter attached and e-mailed to the complainant.';
+    }
+
+    res.json({
+      message: responseMessage,
+      autoForwarded: isAutoForward,
+      autoWsSent: !!(autoWs && autoWs.sent),
+    });
   } catch (e) {
     console.error('update status error:', e);
     res.status(500).json({ error: 'Server error' });
@@ -2368,7 +3014,8 @@ router.post('/', async (req, res) => {
          InvestigatingReport, IsInvestigatingReportAvailable,
          GSTType, IsAnswerable, Declaration, IsAudioVideo,
          EntityMisconduct, isChkSameAddress,
-         NatureOfAllegation, NatureDatails)
+         NatureOfAllegation, NatureDatails,
+         VerificationDate, VerificationTime, VerificationPlace)
        OUTPUT INSERTED.CompID
        VALUES
         (@complaintNo, @compType, @name, @email, @countryCode, @mobile, @stdCode, @landlineNo,
@@ -2389,7 +3036,8 @@ router.post('/', async (req, res) => {
          @investReport, @isInvestReport,
          @gstType, @isAnswerable, @declaration, @isAudioVideo,
          @entityMisconduct, @isChkSameAddress,
-         @nature, @natureDetails)`,
+         @nature, @natureDetails,
+         @verificationDate, @verificationTime, @verificationPlace)`,
       {
         complaintNo,
         compType: b.compTypeId || null,
@@ -2425,8 +3073,8 @@ router.post('/', async (req, res) => {
         gstIn: b.gstinNo || null,
         instrumentNo: b.instrumentNo || null,
         instrumentDate: b.instrumentDate || null,
-        taxable: b.taxableAmount || null,
-        taxRate: b.taxRate || null,
+        taxable: isGov ? 0 : b.taxableAmount || null,
+        taxRate: isGov ? 0 : b.taxRate || null,
         paymentDetails: b.paymentDetails || null,
         userId,
         initialStatus,
@@ -2468,6 +3116,9 @@ router.post('/', async (req, res) => {
         isChkSameAddress: b.isChkSameAddress ? 1 : 0,
         nature: b.natureOfAllegation || null,
         natureDetails: b.natureOfAllegation || null,
+        verificationDate: b.verificationDate || null,
+        verificationTime: b.verificationTime || null,
+        verificationPlace: b.verificationPlace || null,
       }
     );
 
@@ -2484,9 +3135,11 @@ router.post('/', async (req, res) => {
     // for scrutiny (Status 2). If no SO is resolvable, the complaint stays at
     // Status 1 (Complaint Received) for a manual assignment by the DD.
     // Drafts are never assigned - they wait until the complainant submits.
+    let assignedSO = null;
     if (!isDraft) {
       const fixedSO = await resolveFixedSO();
       if (fixedSO) {
+        assignedSO = fixedSO;
         await executeNonQuery(
           `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks)
            VALUES (@id, 2, @userId, @userToId, GETDATE(), 'Auto-assigned to fixed SO as per DC Flow')`,
@@ -2579,6 +3232,18 @@ router.post('/', async (req, res) => {
     // written statement for the firm complaint.
     await ensureAnswerableUsersForComplaint(compId);
 
+    // A firm respondent gets its own login as soon as the complaint is
+    // submitted, so the firm can add / assign answerable members and the OTP
+    // for that login is delivered to the firm's email address.
+    const isFirmComplaint = b.isFirm === true || b.isFirm === 1 || b.isFirm === '1';
+    if (!isDraft && isFirmComplaint) {
+      try {
+        await ensureRespondentUserForComplaint(compId);
+      } catch (loginErr) {
+        console.error('firm login creation failed:', loginErr);
+      }
+    }
+
     // Audio/Video attachments
     if (Array.isArray(b.audioVideo)) {
       for (const av of b.audioVideo) {
@@ -2589,6 +3254,30 @@ router.post('/', async (req, res) => {
         );
       }
     }
+
+    await writeAudit(req, {
+      compId,
+      compNo,
+      action: isDraft ? 'COMPLAINT_DRAFT_CREATED' : 'COMPLAINT_CREATED',
+      entity: 'COMPLAINT',
+      entityId: compId,
+      oldValues: null,
+      newValues: {
+        CompNo: compNo,
+        IsTemp: isDraft ? 1 : 0,
+        StatusID: isDraft ? 1 : (assignedSO ? 2 : 1),
+        AssignedTo: assignedSO,
+        CompTypeID: b.compTypeId || null,
+        Complainant: b.name || complainant?.[0]?.NameOfTheUser || null,
+        Respondent: b.resName || null,
+        VerificationDate: b.verificationDate || null,
+        VerificationTime: b.verificationTime || null,
+        VerificationPlace: b.verificationPlace || null,
+      },
+      details: isDraft
+        ? 'Complaint draft created.'
+        : (assignedSO ? 'Complaint filed and auto-assigned to the fixed SO.' : 'Complaint filed; no SO resolved so it awaits manual assignment.'),
+    });
 
     res.status(201).json({ CompID: compId, CompNo: compNo, IsTemp: isDraft ? 1 : 0 });
   } catch (e) {

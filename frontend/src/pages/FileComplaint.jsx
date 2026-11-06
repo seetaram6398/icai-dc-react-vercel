@@ -14,6 +14,7 @@ import { regionForState } from '../utils/region';
 import './Reports.css';
 
 const CCODES = ['91', '1', '44', '61', '971', '966', '65', '977', '880', '94', '92'];
+const GOV_COMP_TYPE_LABELS = ['Central Goverment', 'State Goverment', 'Regulatory Agency'];
 
 const emptyForm = {
   compTypeId: '',
@@ -34,9 +35,9 @@ const emptyForm = {
   paymentMode: '', paymentDate: '', transRefNo: '', gstinNo: '', instrumentNo: '',
   instrumentDate: '', taxableAmount: '2950', taxRate: '18', paymentDetails: '',
   gstType: 'CGST&SGST',
-  digitalEvidenceCert: '',
-  entityMisconduct: '', natureOfAllegation: '',
-  declaration: false, isChkSameAddress: false, isAnswerable: '0', isAudioVideo: '0',
+  natureOfAllegation: '',
+  verificationDate: '', verificationTime: '', verificationPlace: '',
+  isChkSameAddress: false, isAnswerable: '0',
 };
 
 // Fetch an uploaded /documents/<relPath> file through the authenticated backend proxy
@@ -165,6 +166,22 @@ function toDateInput(v) {
   return `${y}-${m}-${day}`;
 }
 
+function currentTimeText(d = new Date()) {
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function verificationParts(v) {
+  const d = v ? new Date(`${v}T00:00:00`) : null;
+  if (!d || Number.isNaN(d.getTime())) {
+    return { day: '____', month: '________', year: '____' };
+  }
+  return {
+    day: String(d.getDate()).padStart(2, '0'),
+    month: d.toLocaleDateString('en-GB', { month: 'long' }),
+    year: String(d.getFullYear()),
+  };
+}
+
 export default function FileComplaint() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -177,7 +194,12 @@ export default function FileComplaint() {
   // Form I (the legacy ?type=A link). Only the DD "Suo Moto" flow keeps Form A.
   const formType = isDD ? 'A' : 'I';
 
-  const [form, setForm] = useState({ ...emptyForm, formType });
+  const [form, setForm] = useState(() => ({
+    ...emptyForm,
+    formType,
+    verificationDate: toDateInput(new Date()),
+    verificationTime: currentTimeText(),
+  }));
   const [states, setStates] = useState([]);
   const [cities, setCities] = useState([]);
   const [commStates, setCommStates] = useState([]);
@@ -231,7 +253,6 @@ export default function FileComplaint() {
   const [memCommCities, setMemCommCities] = useState([]);
   const [answerableMembers, setAnswerableMembers] = useState([]);
 
-  const [audioFiles, setAudioFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const popup = usePopups();
 
@@ -332,6 +353,13 @@ export default function FileComplaint() {
     const match = commCities.find((c) => String(c.label || '').trim().toLowerCase() === name);
     if (match) setForm((f) => ({ ...f, resCityId: String(match.value) }));
   }, [commCities, form.isChkSameAddress, form.resType, form.resCityId, form.resRCityName]);
+
+  // Verification place is taken from the complainant's selected professional city.
+  useEffect(() => {
+    const label = cities.find((c) => String(c.value) === String(form.cityId))?.label || '';
+    if (!label) return;
+    setForm((f) => (f.verificationPlace === label ? f : { ...f, verificationPlace: label }));
+  }, [cities, form.cityId]);
 
   // Resolve schedule/part/item labels (edit mode) after masters are available.
   const resolveScheduleLabels = async (scheds) => {
@@ -445,16 +473,14 @@ export default function FileComplaint() {
           taxRate: d.TaxRate != null ? String(d.TaxRate) : '',
           paymentDetails: d.PaymentDetails || '',
           gstType: d.GSTType || 'CGST&SGST',
-          entityMisconduct: d.EntityMisconduct || '',
           natureOfAllegation: d.NatureOfAllegation || '',
-          declaration: Number(d.Declaration) === 1,
+          verificationDate: toDateInput(d.VerificationDate) || toDateInput(new Date()),
+          verificationTime: d.VerificationTime || currentTimeText(),
+          verificationPlace: d.VerificationPlace || '',
           isChkSameAddress: Number(d.isChkSameAddress) === 1,
           isAnswerable: d.IsAnswerable != null ? String(d.IsAnswerable) : '0',
-          isAudioVideo: d.IsAudioVideo != null ? String(d.IsAudioVideo) : '0',
         });
-        const certDoc = (d.documents || []).find((x) => x.DocumentID === 'Digital Evidence Certificate');
-        setForm((f) => ({ ...f, digitalEvidenceCert: certDoc?.DocURL || '' }));
-        setDocs((d.documents || []).filter((x) => x.DocumentID !== 'Digital Evidence Certificate').map((x) => ({
+        setDocs((d.documents || []).map((x) => ({
           documentId: x.DocumentID || '',
           docUrl: x.DocURL || '',
           fileName: x.DocURL || '',
@@ -538,7 +564,14 @@ export default function FileComplaint() {
 
   const onCompTypeChange = async (e) => {
     const v = e.target.value;
-    setForm({ ...form, compTypeId: v });
+    const label = compTypes.find((c) => String(c.value) === String(v))?.label || '';
+    const gov = GOV_COMP_TYPE_LABELS.includes(label);
+    setForm({
+      ...form,
+      compTypeId: v,
+      taxableAmount: gov ? '0' : (form.taxableAmount === '0' ? '2950' : form.taxableAmount),
+      taxRate: gov ? '0' : (form.taxRate === '0' ? '18' : form.taxRate),
+    });
     if (v) {
       try {
         const { data } = await api.get(`/masters/33?option1=${v}`);
@@ -546,6 +579,14 @@ export default function FileComplaint() {
       } catch (_) { setRegulators([]); }
     }
   };
+
+  useEffect(() => {
+    if (!form.compTypeId) return;
+    const label = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
+    if (!GOV_COMP_TYPE_LABELS.includes(label)) return;
+    if (form.taxableAmount === '0' && form.taxRate === '0') return;
+    setForm((prev) => ({ ...prev, taxableAmount: '0', taxRate: '0' }));
+  }, [compTypes, form.compTypeId, form.taxableAmount, form.taxRate]);
 
   const onScheduleChange = async (e) => {
     const v = e.target.value;
@@ -653,42 +694,46 @@ export default function FileComplaint() {
     }
   };
 
-  const onSameAddress = (e) => {
+  const onSameAddress = async (e) => {
     const checked = e.target.checked;
-    setForm((f) => {
-      if (checked && f.resType === 'firm') {
-        return {
-          ...f,
-          isChkSameAddress: true,
-          resCommunicationAddress: f.resProfessionalAddress,
-          resStateId: f.firmProfStateId,
-          resCityId: f.firmProfCityId,
-          resComRegion: f.resRegion,
-        };
-      }
-      if (checked) {
-        // member: communication = professional (from lookup, needs state value)
-        const st = commStates.find((s) => s.label?.toLowerCase() === (f.resRStateName || '').toLowerCase());
-        const cityMatch = commCities.find((c) => c.label?.trim().toLowerCase() === (f.resRCityName || '').trim().toLowerCase());
-        return {
-          ...f,
-          isChkSameAddress: true,
-          resCommunicationAddress: f.resProfessionalAddress,
-          resStateId: st ? String(st.value) : f.resStateId,
-          resCityId: cityMatch ? String(cityMatch.value) : '',
-          resComRegion: f.resRegion,
-        };
-      }
-      return { ...f, isChkSameAddress: false, resCommunicationAddress: '', resStateId: '', resCityId: '', resComRegion: '' };
-    });
-    if (checked) {
-      const f = form;
-      let stid = f.resType === 'firm' ? f.firmProfStateId : '';
-      if (f.resType === 'member') {
-        const st = commStates.find((s) => s.label?.toLowerCase() === (f.resRStateName || '').toLowerCase());
-        stid = st ? String(st.value) : '';
-      }
-      if (stid) loadCities(stid, setCommCities);
+    if (!checked) {
+      setForm((f) => ({ ...f, isChkSameAddress: false, resCommunicationAddress: '', resStateId: '', resCityId: '', resComRegion: '' }));
+      return;
+    }
+    const f = form;
+    if (f.resType === 'firm') {
+      setForm((prev) => ({
+        ...prev,
+        isChkSameAddress: true,
+        resCommunicationAddress: prev.resProfessionalAddress,
+        resStateId: prev.firmProfStateId,
+        resCityId: prev.firmProfCityId,
+        resComRegion: prev.resRegion,
+      }));
+      return;
+    }
+
+    const stateName = String(f.resRStateName || '').trim().toLowerCase();
+    const st = commStates.find((s) => String(s.label || '').trim().toLowerCase() === stateName);
+    const stid = st ? String(st.value) : String(f.resStateId || '');
+    setForm((prev) => ({
+      ...prev,
+      isChkSameAddress: true,
+      resCommunicationAddress: prev.resProfessionalAddress,
+      resStateId: stid,
+      resCityId: '',
+      resComRegion: prev.resRegion,
+    }));
+    if (!stid) return;
+    try {
+      const r = await api.get(`/masters/7?option1=${stid}`);
+      const cities = r.data || [];
+      setCommCities(cities);
+      const cityName = String(f.resRCityName || '').trim().toLowerCase();
+      const cityMatch = cities.find((c) => String(c.label || '').trim().toLowerCase() === cityName);
+      if (cityMatch) setForm((prev) => ({ ...prev, resCityId: String(cityMatch.value) }));
+    } catch (_) {
+      setCommCities([]);
     }
   };
 
@@ -772,24 +817,10 @@ export default function FileComplaint() {
     setMemAnsCaptcha(null); setMemAnsCaptchaAnswer('');
   };
 
-  const onAudioUpload = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const allowed = ['.mp3', '.wav', '.mp4', '.wmv', '.avi'];
-    if (!allowed.some((a) => f.name.toLowerCase().endsWith(a))) {
-      popup.warning('Only MP3, WAV, MP4, WMV, AVI files allowed'); return;
-    }
-    if (f.size > 15 * 1024 * 1024) { popup.warning('File size should not be greater than 15mb'); return; }
-    try {
-      const data = await uploadFile(f, 'audiovideo');
-      setAudioFiles([...audioFiles, { attachment: data.relativePath || data.path, fileName: f.name }]);
-    } catch (_) { popup.error('Upload failed'); }
-  };
-
   const validate = () => {
     if (!form.compTypeId) return 'Please select Type of Complaint';
     const ctLabel = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
-    if (['Central Goverment', 'State Goverment', 'Regulatory Agency'].includes(ctLabel)) {
+    if (GOV_COMP_TYPE_LABELS.includes(ctLabel)) {
       if (!form.regulatorName) return 'Please enter Regulator Name';
     }
     if (!form.name) return 'Please enter Name';
@@ -848,7 +879,8 @@ export default function FileComplaint() {
           ? 'Please enter a valid 10-digit Respondent Mobile No (starting 6-9)'
           : 'Please enter a valid Respondent Mobile No';
       }
-      if (form.resEmail && !isValidEmail(form.resEmail)) return 'Please enter a valid Respondent Email ID';
+      if (!form.resEmail) return 'Please enter Firm Email ID';
+      if (!isValidEmail(form.resEmail)) return 'Please enter a valid Firm Email ID';
       if (!form.resProfessionalAddress) return 'Please enter Professional Address';
       if (!form.resCommunicationAddress) return 'Please enter Communication Address';
       if (!form.firmProfStateId) return 'Please select Professional State';
@@ -860,10 +892,8 @@ export default function FileComplaint() {
     if (!form.briefAttachment) return 'Please upload Brief Fact Statement';
     if (!form.misconductAttachment) return 'Please upload Particular of Misconduct';
     if (scheduleList.length === 0) return 'Please add at least one allegation / misconduct';
-    if (!form.entityMisconduct) return 'Please enter Entity in respect of which misconduct alleged';
-    if (String(form.entityMisconduct).trim().length < 2) return 'Please enter a valid Entity name';
 
-    const isGovType = ['Central Goverment', 'State Goverment', 'Regulatory Agency'].includes(ctLabel);
+    const isGovType = GOV_COMP_TYPE_LABELS.includes(ctLabel);
     if (!isGovType) {
       if (!form.paymentMode) return 'Please select Mode of Payment';
       if (!form.paymentDate) return 'Please enter Payment Date';
@@ -881,11 +911,9 @@ export default function FileComplaint() {
       if (!form.paymentDetails) return 'Please enter Payment Details Like DD';
     }
     if (docs.length === 0) return 'Please provide at least one document/evidence';
-    if (form.isAudioVideo === '1') {
-      if (audioFiles.length === 0) return 'Please upload Audio/Video Evidence';
-      if (!form.digitalEvidenceCert) return 'Please upload Digital Evidence Certificate';
-    }
-    if (!form.declaration) return 'Please Accept Declaration';
+    if (!String(form.verificationDate || '').trim()) return 'Please enter Verification Date';
+    if (isFutureDate(form.verificationDate)) return 'Verification Date cannot be in the future';
+    if (!String(form.verificationPlace || '').trim()) return 'Please enter Verification Place';
     return null;
   };
 
@@ -895,6 +923,8 @@ export default function FileComplaint() {
     setBusy(true);
     try {
       const T = (v) => String(v ?? '').trim();
+      const submittedAt = new Date();
+      const verificationCityLabel = cities.find((c) => String(c.value) === String(form.cityId))?.label || '';
       const payload = {
         ...form,
         name: T(form.name), email: T(form.email),
@@ -907,23 +937,21 @@ export default function FileComplaint() {
         resCommunicationAddress: T(form.resCommunicationAddress),
         transRefNo: T(form.transRefNo), instrumentNo: T(form.instrumentNo),
         gstinNo: T(form.gstinNo), paymentDetails: T(form.paymentDetails),
-        entityMisconduct: T(form.entityMisconduct),
         regulatorName: T(form.regulatorName), regulatorDesignation: T(form.regulatorDesignation),
         resStateName: form.resRStateName,
         resCityName: form.resRCityName,
         rStateName: form.resRStateName,
         rCityName: form.resRCityName,
         isAnswerable: form.isAnswerable === '1' || answerableMembers.length > 0 ? '1' : '0',
-        isAudioVideo: audioFiles.length > 0 ? '1' : '0',
-        documents: form.isAudioVideo === '1' && form.digitalEvidenceCert
-          ? [...docs, { documentId: 'Digital Evidence Certificate', docUrl: form.digitalEvidenceCert, fileName: form.digitalEvidenceCert.split(/[\\/]/).pop() }]
-          : docs,
+        documents: docs,
         factPersons: persons,
         schedules: scheduleList,
         answerableMembers,
-        audioVideo: audioFiles,
         isChkSameAddress: form.isChkSameAddress,
-        declaration: form.declaration,
+        verificationDate: toDateInput(submittedAt),
+        verificationTime: currentTimeText(submittedAt),
+        verificationPlace: T(form.verificationPlace) || verificationCityLabel,
+        declaration: true,
         isFirm: form.resType === 'firm',
       };
       for (const k of ['stateId', 'cityId', 'resStateId', 'resCityId', 'firmProfStateId', 'firmProfCityId']) {
@@ -970,7 +998,8 @@ export default function FileComplaint() {
     : 'Filing disciplinary complaint by Private Individual/Company/Firm';
 
   const ctLabel = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
-  const isGovType = ['Central Goverment', 'State Goverment', 'Regulatory Agency'].includes(ctLabel);
+  const isGovType = GOV_COMP_TYPE_LABELS.includes(ctLabel);
+  const vp = verificationParts(form.verificationDate);
 
   return (
     <div>
@@ -1000,7 +1029,7 @@ export default function FileComplaint() {
           <div className="row g-3">
             <div className="col-md-4">
               <label className="form-label">Type of Complaint *</label>
-              <select className="form-select" value={form.compTypeId} onChange={onCompTypeChange} disabled={isEdit || !!form.compTypeId && !isDD}>
+              <select className="form-select" value={form.compTypeId} onChange={onCompTypeChange} disabled={isEdit}>
                 <option value="">--Select--</option>
                 {compTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
@@ -1078,11 +1107,6 @@ export default function FileComplaint() {
               <FileUploadInput label="Upload Complainant Photo" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
                 accept=".png,.jpg,.jpeg" sizeMB={0.5} required preview type="photo"
                 current={form.complaintantPhoto} onUpload={(path) => setForm({ ...form, complaintantPhoto: path })} />
-            </div>
-            <div className="col-md-4">
-              <FileUploadInput label="Upload Complainant Signature" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
-                accept=".png,.jpg,.jpeg" sizeMB={0.5} required preview type="signature"
-                current={form.complaintantSignature} onUpload={(path) => setForm({ ...form, complaintantSignature: path })} />
             </div>
           </div>
         </div>
@@ -1182,197 +1206,91 @@ export default function FileComplaint() {
               <input className="form-control" maxLength={8} value={form.resLandlineNo} onChange={set('resLandlineNo')} inputMode="numeric" />
             </div>
             <div className="col-md-4">
-              <label className="form-label">Email ID</label>
+              <label className="form-label">{form.resType === 'firm' ? 'Firm Email ID *' : 'Email ID'}</label>
               <input type="email" className="form-control" maxLength={100} value={form.resEmail} onChange={set('resEmail')} />
             </div>
-            <div className="col-md-12">
-              <div className="form-check">
-                <input className="form-check-input" type="checkbox" id="sameAddr" checked={form.isChkSameAddress} onChange={onSameAddress} />
-                <label className="form-check-label" htmlFor="sameAddr">Same as Professional Address</label>
-              </div>
+          </div>
+
+          <div className="row g-3 mb-3">
+            <div className="col-12">
+              <h6 className="text-primary mb-0">Professional Address</h6>
             </div>
             <div className="col-md-6">
               <label className="form-label">Professional Address *</label>
               <input className="form-control" value={form.resProfessionalAddress} onChange={set('resProfessionalAddress')} />
             </div>
-            <div className="col-md-6">
-              <label className="form-label">Communication Address *</label>
-              <input className="form-control" value={form.resCommunicationAddress} onChange={set('resCommunicationAddress')} />
-            </div>
 
             {form.resType === 'firm' ? (
               <>
-                <div className="col-md-3">
+                <div className="col-md-2">
                   <label className="form-label">Professional State *</label>
                   <select className="form-select" value={form.firmProfStateId} onChange={onProfStateChange}>
                     <option value="">--Select--</option>
                     {profStates.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
-                <div className="col-md-3">
+                <div className="col-md-2">
                   <label className="form-label">Professional City *</label>
                   <select className="form-select" value={form.firmProfCityId} onChange={set('firmProfCityId')} disabled={!form.firmProfStateId}>
                     <option value="">--Select--</option>
                     {profCities.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </div>
-                <div className="col-md-3">
+                <div className="col-md-2">
                   <label className="form-label">Professional Region *</label>
                   <input className="form-control" value={form.resRegion || ''} readOnly />
                 </div>
               </>
             ) : (
               <>
-                <div className="col-md-3">
+                <div className="col-md-2">
                   <label className="form-label">Professional State *</label>
                   <input className="form-control" value={form.resRStateName || ''} readOnly />
                 </div>
-                <div className="col-md-3">
+                <div className="col-md-2">
                   <label className="form-label">Professional City *</label>
                   <input className="form-control" value={form.resRCityName || ''} readOnly />
                 </div>
-                <div className="col-md-3">
+                <div className="col-md-2">
                   <label className="form-label">Professional Region *</label>
                   <input className="form-control" value={form.resRegion || ''} readOnly />
                 </div>
               </>
             )}
+          </div>
 
-            <div className="col-md-3">
+          <div className="form-check mb-3">
+            <input className="form-check-input" type="checkbox" id="sameAddr" checked={form.isChkSameAddress} onChange={onSameAddress} />
+            <label className="form-check-label" htmlFor="sameAddr">Same as Professional Address</label>
+          </div>
+
+          <div className="row g-3">
+            <div className="col-12">
+              <h6 className="text-primary mb-0">Communication Address</h6>
+            </div>
+            <div className="col-md-6">
+              <label className="form-label">Communication Address *</label>
+              <input className="form-control" value={form.resCommunicationAddress} onChange={set('resCommunicationAddress')} />
+            </div>
+            <div className="col-md-2">
               <label className="form-label">Communication State *</label>
               <select className="form-select" value={form.resStateId} onChange={onCommStateChange}>
                 <option value="">--Select--</option>
                 {commStates.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
-            <div className="col-md-3">
+            <div className="col-md-2">
               <label className="form-label">Communication City *</label>
               <select className="form-select" value={form.resCityId} onChange={set('resCityId')} disabled={!form.resStateId}>
                 <option value="">--Select--</option>
                 {commCities.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </div>
-            <div className="col-md-3">
+            <div className="col-md-2">
               <label className="form-label">Communication Region</label>
               <input className="form-control" value={form.resComRegion || ''} readOnly />
             </div>
           </div>
-
-          {/* Members Answerable (for firms) */}
-          {form.resType === 'firm' && (
-            <div className="mt-4 border-top pt-3">
-              <h6 className="text-primary mb-3">Do you know any member answerable?</h6>
-              <div className="row g-3 mb-3">
-                <div className="col-md-2">
-                  <label className="form-label">Membership No</label>
-                  <input className="form-control" maxLength={20} value={memRegNo} onChange={(e) => setMemRegNo(sanitizeAlphaNumUpper(e.target.value, 20))} />
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">CAPTCHA Image</label>
-                  <div className="d-flex align-items-center" style={{ minHeight: 38 }}>
-                    {memAnsCaptcha && <img src={memAnsCaptcha.image} alt="CAPTCHA" height={36} style={{ cursor: 'pointer' }} onClick={loadMemberAnsCaptcha} title="Click to refresh" />}
-                    {!memAnsCaptcha && <button className="btn btn-outline-secondary btn-sm" onClick={loadMemberAnsCaptcha} type="button">Load CAPTCHA</button>}
-                  </div>
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">Enter CAPTCHA</label>
-                  <input className="form-control" value={memAnsCaptchaAnswer} onChange={(e) => setMemAnsCaptchaAnswer(e.target.value)} />
-                </div>
-                <div className="col-md-1">
-                  <label className="form-label">&nbsp;</label>
-                  <button className="btn btn-outline-secondary w-100 px-2" style={{ height: 38 }} onClick={loadMemberAnsCaptcha} type="button" title="Refresh CAPTCHA">
-                    <i className="bi bi-arrow-clockwise"></i>
-                  </button>
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">&nbsp;</label>
-                  <button className="btn btn-primary w-100" style={{ height: 38 }} onClick={onGetMemberAnsDetails} type="button" disabled={memAnsLookupBusy}>
-                    {memAnsLookupBusy ? (
-                      <><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Loading...</>
-                    ) : (
-                      <><i className="bi bi-search me-1"></i>Get Details</>
-                    )}
-                  </button>
-                </div>
-              </div>
-              <div className="row g-3 mb-3">
-                <div className="col-md-3"><label className="form-label">Name</label><input className="form-control" value={memName} onChange={(e) => setMemName(e.target.value)} /></div>
-                <div className="col-md-2"><label className="form-label">Country Code</label><select className="form-select" value={memCountryCode} onChange={(e) => setMemCountryCode(e.target.value)}>{CCODES.map((c)=><option key={c} value={c}>+{c}</option>)}</select></div>
-                <div className="col-md-2"><label className="form-label">Mobile No</label><input className="form-control" maxLength={String(memCountryCode) === '91' ? 10 : 15} inputMode="numeric" value={memMobile} onChange={(e) => setMemMobile(sanitizeDigits(e.target.value, 15))} /></div>
-                <div className="col-md-5"><label className="form-label">Email ID <span className="text-danger">*</span></label><input type="email" className="form-control" maxLength={100} value={memEmail} onChange={(e) => setMemEmail(e.target.value.trim())} required /></div>
-              </div>
-              <div className="row g-3 mb-3">
-                <div className="col-md-6">
-                  <label className="form-label">Professional Address <span className="text-danger">*</span></label>
-                  <input className="form-control" value={memProAddress} onChange={(e)=>setMemProAddress(e.target.value)} />
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">Professional State <span className="text-danger">*</span></label>
-                  <input className="form-control" value={memProState} readOnly />
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">Professional City <span className="text-danger">*</span></label>
-                  <input className="form-control" value={memProCity} readOnly />
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">Professional Region <span className="text-danger">*</span></label>
-                  <input className="form-control" value={memProRegion} readOnly />
-                </div>
-              </div>
-              <div className="row g-3 mb-3">
-                <div className="col-md-6">
-                  <label className="form-label">Communication Address <span className="text-danger">*</span></label>
-                  <input className="form-control" value={memCommAddress} onChange={(e)=>setMemCommAddress(e.target.value)} />
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">Communication State <span className="text-danger">*</span></label>
-                  <select className="form-select" value={memCommStateId} onChange={async (e) => {
-                    const v = e.target.value;
-                    const st = memCommStates.find((s) => String(s.value) === String(v));
-                    setMemCommStateId(v);
-                    setMemCommRegion(regionForState(st?.label, st?.Region));
-                    if (v) {
-                      const r = await api.get(`/masters/7?option1=${v}`);
-                      setMemCommCities(r.data || []);
-                    } else {
-                      setMemCommCities([]);
-                    }
-                    setMemCommCityId('');
-                  }}>
-                    <option value="">--Select--</option>
-                    {memCommStates.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">Communication City <span className="text-danger">*</span></label>
-                  <select className="form-select" value={memCommCityId} onChange={(e) => setMemCommCityId(e.target.value)} disabled={!memCommStateId}>
-                    <option value="">--Select--</option>
-                    {memCommCities.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label">Communication Region <span className="text-danger">*</span></label>
-                  <input className="form-control" value={memCommRegion} readOnly />
-                </div>
-              </div>
-              <button className="btn btn-success btn-sm mb-3" onClick={onAnswerableAdd} type="button">
-                <i className="bi bi-plus-circle me-1"></i>Save
-              </button>
-              {answerableMembers.length > 0 && (
-                <table className="table table-sm table-bordered">
-                  <thead><tr><th>Name</th><th>Reg No</th><th>Mobile</th><th>Email</th><th>Action</th></tr></thead>
-                  <tbody>
-                    {answerableMembers.map((m, i) => (
-                      <tr key={i}>
-                        <td>{m.memName}</td><td>{m.memRegistrationNo}</td><td>{m.memMobileNo}</td><td>{m.memEmailID}</td>
-                        <td><button className="btn btn-danger btn-sm" onClick={() => setAnswerableMembers(answerableMembers.filter((_, j) => j !== i))} type="button">Delete</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -1495,19 +1413,6 @@ export default function FileComplaint() {
         </div>
       </div>
 
-      {/* ===== ENTITY IN RESPECT OF WHICH MISCONDUCT ===== */}
-      <div className="card mb-3">
-        <div className="card-header bg-warning text-dark fw-semibold"><i className="bi bi-building me-2"></i>Entity in respect of which misconduct alleged</div>
-        <div className="card-body">
-          <div className="row g-3">
-            <div className="col-12">
-              <label className="form-label fw-semibold">Entity in respect of which misconduct alleged <span className="text-danger">*</span></label>
-              <input className="form-control" value={form.entityMisconduct} onChange={set('entityMisconduct')} placeholder="Entity in respect of which misconduct alleged." />
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* ===== PAYMENT DETAILS ===== */}
       <div className="card mb-3">
         <div className="card-header bg-success text-white fw-semibold"><i className="bi bi-credit-card me-2"></i>Payment Details</div>
@@ -1594,61 +1499,47 @@ export default function FileComplaint() {
               </tbody>
             </table>
           )}
-          <h6 className="text-primary mb-3 mt-4">Audio/Video Attachment</h6>
-          <div className="row g-3 mt-1">
-            <div className="col-md-6">
-              <label className="form-label">Do you have Audio/Video Evidence?</label>
-              <select className="form-select" value={form.isAudioVideo} onChange={set('isAudioVideo')}>
-                <option value="0">No</option>
-                <option value="1">Yes</option>
-              </select>
-            </div>
-            {form.isAudioVideo === '1' && (
-              <>
-                <div className="col-md-3">
-                  <label className="form-label">Upload Audio/Video *</label>
-                  <input type="file" className="form-control form-control-sm" accept=".mp3,.wav,.mp4,.wmv,.avi" onChange={onAudioUpload} />
-                </div>
-                <div className="col-md-3">
-                  <FileUploadInput label="Upload Digital Evidence Certificate" required
-                    hint="(File Size should be less than 10 MB ) (.pdf file format supported)"
-                    accept=".pdf" sizeMB={10} type="digicert" current={form.digitalEvidenceCert}
-                    onUpload={(path) => setForm({ ...form, digitalEvidenceCert: path })} />
-                </div>
-              </>
-            )}
-          </div>
-          {audioFiles.length > 0 && (
-            <table className="table table-sm table-bordered mt-2">
-              <thead><tr><th>Audio/Video File</th><th>Action</th></tr></thead>
-              <tbody>
-                {audioFiles.map((a, i) => (
-                  <tr key={i}>
-                    <td>{a.fileName}</td>
-                    <td><button className="btn btn-danger btn-sm" onClick={() => setAudioFiles(audioFiles.filter((_, j) => j !== i))} type="button">Delete</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
         </div>
       </div>
 
-      {/* ===== DECLARATION ===== */}
+      {/* ===== VERIFICATION ===== */}
       <div className="card mb-3">
-        <div className="card-header bg-primary text-white fw-semibold"><i className="bi bi-shield-check me-2"></i>Declaration</div>
+        <div className="card-header bg-primary text-white fw-semibold"><i className="bi bi-patch-check me-2"></i>Verification</div>
         <div className="card-body">
-          <div className="form-check mb-2">
-            <input className="form-check-input" type="checkbox" id="declaration" checked={form.declaration}
-              onChange={(e) => setForm({ ...form, declaration: e.target.checked })} />
-            <label className="form-check-label fw-bold" htmlFor="declaration">I hereby declare the following : *</label>
+          <p className="mb-3">
+            I, <strong>{form.name || '________________'}</strong>, the complainant, do hereby declare that what is stated above is true to the best of my information and belief.
+          </p>
+          <div className="row g-3">
+            <div className="col-md-3">
+              <label className="form-label">Verified Date *</label>
+              <input type="date" className="form-control" value={form.verificationDate} readOnly />
+              <div className="form-text">Auto-filled with today's date on submission</div>
+            </div>
+            <div className="col-md-2">
+              <label className="form-label">Verified Time *</label>
+              <input className="form-control" value={form.verificationTime} readOnly />
+              <div className="form-text">Auto-filled at submission</div>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label">Place *</label>
+              <input className="form-control" value={form.verificationPlace} readOnly placeholder="Auto from city" />
+              <div className="form-text">Auto-filled from professional city</div>
+            </div>
+            <div className="col-md-4">
+              <FileUploadInput label="Upload Complainant Signature" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
+                accept=".png,.jpg,.jpeg" sizeMB={0.5} required preview type="signature"
+                current={form.complaintantSignature} onUpload={(path) => setForm({ ...form, complaintantSignature: path })} />
+            </div>
           </div>
-          <ol className="small text-muted mt-2 mb-0" style={{ fontSize: 12 }}>
-            <li>I, authorized signatory on behalf of the Complainant do hereby declare that what is stated above is true to the best of my information and belief.</li>
-            <li>I further declare that I have been duly authorized to file the complaint and the authorization/resolution in this regard has been enclosed along with this form.</li>
-            <li>I understand that in case of any misstatement of facts or any misrepresentation/suppression of facts/false statements/furnishing of fabricated documents, I am liable to be proceeded with in accordance with the law.</li>
-            <li className="mb-0">I further understand that in case the complaint is found to be frivolous or to bring disrepute to the Respondent or the organization thereof, I am liable to be proceeded with in accordance with the law.</li>
-          </ol>
+          <div className="d-flex justify-content-between align-items-end flex-wrap gap-3 mt-3">
+            <p className="mb-0">
+              Verified today the <strong>{vp.day}</strong> day of <strong>{vp.month}</strong>, <strong>{vp.year}</strong> at <strong>{form.verificationPlace || '________'}</strong>.
+            </p>
+            <div className="text-center">
+              <ImagePreview src={form.complaintantSignature} width={150} height={60} placeholder="Signature" />
+              <div className="small fw-semibold mt-1">Signature of Complainant</div>
+            </div>
+          </div>
         </div>
       </div>
 

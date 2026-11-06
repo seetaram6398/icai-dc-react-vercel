@@ -31,9 +31,11 @@ function ComplaintList() {
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [partyTotals, setPartyTotals] = useState({ total: 0, actionPending: 0 });
   const [statuses, setStatuses] = useState([]);
   const ut = Number(user?.UserType);
   const aspxView = ut === 3;
+  const isParty = ut === 2 || ut === 3;
   const canFileComplaint = [1, 2, 3].includes(ut);
   const fileComplaintLabel = ut === 1 ? 'File New Complaint' : 'Add New Complaint';
   // Rule 5(4) - the staff (Admin / DD / SO) also see the clubbing and closure
@@ -41,6 +43,7 @@ function ComplaintList() {
   // numbers, never any other detail of a clubbed complaint.
   const showClubbingDetails = [1, 4, 5].includes(ut);
   const statusIds = searchParams.get('statusIds') || '';
+  const actionPending = searchParams.get('actionPending') === '1';
   const [draft, setDraft] = useState(statusIds);
   const [q, setQ] = useState({ search: '', dateFrom: '', dateTo: '' });
 
@@ -57,6 +60,7 @@ function ComplaintList() {
   useEffect(() => {
     const params = new URLSearchParams();
     if (statusIds) params.set('statusIds', statusIds);
+    if (actionPending) params.set('actionPending', '1');
     if (ut === 3) params.set('complainantId', user.UserID);
     if (ut === 2) params.set('respondentFor', user.Email);
     if (q.search) params.set('search', q.search);
@@ -68,7 +72,24 @@ function ComplaintList() {
       .then((res) => setRows(res.data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [statusIds, q.search, q.dateFrom, q.dateTo, ut, user?.UserID]);
+  }, [statusIds, actionPending, q.search, q.dateFrom, q.dateTo, ut, user?.UserID]);
+
+  useEffect(() => {
+    if (!isParty) return;
+    const scope = new URLSearchParams();
+    if (ut === 3) scope.set('complainantId', user.UserID);
+    if (ut === 2) scope.set('respondentFor', user.Email);
+    const pending = new URLSearchParams(scope);
+    pending.set('actionPending', '1');
+    Promise.all([api.get(`/complaints?${scope.toString()}`), api.get(`/complaints?${pending.toString()}`)])
+      .then(([all, actionPendingRows]) => {
+        setPartyTotals({
+          total: (all.data || []).length,
+          actionPending: (actionPendingRows.data || []).length,
+        });
+      })
+      .catch(() => {});
+  }, [isParty, ut, user?.UserID, user?.Email]);
 
   useEffect(() => {
     api.get('/masters/12').then((res) => setStatuses(res.data || [])).catch(() => {});
@@ -78,13 +99,14 @@ function ComplaintList() {
   const applyFilter = (ids = draft) => {
     const params = new URLSearchParams();
     if (ids) params.set('statusIds', ids);
+    if (actionPending) params.set('actionPending', '1');
     setSearchParams(params);
   };
 
   const handleClear = () => {
     setDraft('');
     setQ({ search: '', dateFrom: '', dateTo: '' });
-    applyFilter('');
+    setSearchParams(new URLSearchParams());
   };
 
   const viewComplaint = (c) => {
@@ -98,6 +120,7 @@ function ComplaintList() {
   const exportCsv = async () => {
     const params = new URLSearchParams();
     if (statusIds) params.set('statusIds', statusIds);
+    if (actionPending) params.set('actionPending', '1');
     if (q.search) params.set('search', q.search);
     if (q.dateFrom) params.set('dateFrom', q.dateFrom);
     if (q.dateTo) params.set('dateTo', q.dateTo);
@@ -216,7 +239,56 @@ function ComplaintList() {
       </div>
 
       {/* Stat summary strip */}
-      {!loading && rows.length > 0 && (
+      {!loading && isParty && (
+        <div className="stat-row" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          <div
+            className="stat-box stat-box-clickable"
+            style={{ borderLeft: '3px solid #1a4a8a' }}
+            role="button"
+            tabIndex={0}
+            title="View all complaints"
+            onClick={() => navigate('/complaints')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate('/complaints');
+              }
+            }}
+          >
+            <div className="stat-box-icon" style={{ background: '#e8effa', color: '#1a4a8a' }}>
+              <i className="bi bi-file-earmark-text" />
+            </div>
+            <div>
+              <div className="stat-box-value">{partyTotals.total.toLocaleString('en-IN')}</div>
+              <div className="stat-box-label">Total Complaints</div>
+            </div>
+          </div>
+          <div
+            className="stat-box stat-box-clickable"
+            style={{ borderLeft: '3px solid #dc2626' }}
+            role="button"
+            tabIndex={0}
+            title="View cases where your action is pending"
+            onClick={() => navigate('/complaints?actionPending=1')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate('/complaints?actionPending=1');
+              }
+            }}
+          >
+            <div className="stat-box-icon" style={{ background: '#fdecec', color: '#dc2626' }}>
+              <i className="bi bi-x-octagon" />
+            </div>
+            <div>
+              <div className="stat-box-value">{partyTotals.actionPending.toLocaleString('en-IN')}</div>
+              <div className="stat-box-label">No Action Taken</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!loading && !isParty && rows.length > 0 && (
         <div className="stat-row" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
           <div className="stat-box" style={{ borderLeft: '3px solid #1a4a8a' }}>
             <div className="stat-box-icon" style={{ background: '#e8effa', color: '#1a4a8a' }}>
@@ -266,7 +338,13 @@ function ComplaintList() {
             Filter Complaints
           </div>
           <span className="badge-soft badge-soft-neutral">
-            {statusIds && activeStatusName ? `Showing: ${statusText(activeStatusName.label)}` : 'All stages'}
+            {isParty
+              ? actionPending
+                ? 'No Action Taken'
+                : 'All Complaints'
+              : statusIds && activeStatusName
+                ? `Showing: ${statusText(activeStatusName.label)}`
+                : 'All stages'}
           </span>
         </div>
         <div className="card-body">
@@ -298,19 +376,21 @@ function ComplaintList() {
                 onChange={(e) => setQ((prev) => ({ ...prev, dateTo: e.target.value }))}
               />
             </div>
-            <div className="col-md-2">
-              <label className="form-label small fw-semibold">Status</label>
-              <select
-                className="form-select"
-                value={activeStatusName ? statusIds : ''}
-                onChange={(e) => { setDraft(e.target.value); applyFilter(e.target.value); }}
-              >
-                <option value="">All Statuses</option>
-                {statuses.map((s) => (
-                  <option key={s.value} value={s.value}>{statusText(s.label)}</option>
-                ))}
-              </select>
-            </div>
+            {!isParty && (
+              <div className="col-md-2">
+                <label className="form-label small fw-semibold">Status</label>
+                <select
+                  className="form-select"
+                  value={activeStatusName ? statusIds : ''}
+                  onChange={(e) => { setDraft(e.target.value); applyFilter(e.target.value); }}
+                >
+                  <option value="">All Statuses</option>
+                  {statuses.map((s) => (
+                    <option key={s.value} value={s.value}>{statusText(s.label)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="col-md-3 d-flex gap-2 justify-content-md-end">
               <button type="submit" className="btn btn-primary" disabled={loading}>
                 <i className={`${loading ? 'spinner-border spinner-border-sm me-1' : 'bi bi-search me-1'}`} role="status" aria-hidden="true" />
@@ -328,7 +408,11 @@ function ComplaintList() {
         <div className="card-header">
           <div className="card-title">
             <i className="bi bi-file-earmark-text" />
-            {activeStatusName ? statusText(activeStatusName.label) : 'All Complaints'}
+            {actionPending
+              ? `No Action Taken${activeStatusName ? ` - ${statusText(activeStatusName.label)}` : ''}`
+              : activeStatusName
+                ? statusText(activeStatusName.label)
+                : 'All Complaints'}
           </div>
           <span className="badge-soft badge-soft-primary">{rows.length} shown</span>
         </div>

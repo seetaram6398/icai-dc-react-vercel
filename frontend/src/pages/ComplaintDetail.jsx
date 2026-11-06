@@ -140,7 +140,7 @@ function Section({ icon, title, right, children }) {
   );
 }
 
-const USER_KIND_LABELS = { so: 'SO Member', officer: 'Officer', ro: 'Reporting Officer', bod: 'BOD Member' };
+const USER_KIND_LABELS = { so: 'SO Member', vo: 'Vetting Officer', officer: 'Officer', ro: 'Reporting Officer', bod: 'BOD Member' };
 
 const WORKFLOW_PANELS = [
   {
@@ -160,7 +160,7 @@ const WORKFLOW_PANELS = [
     title: 'Written Statement Submitted by the Respondent',
     caption: 'The respondent has submitted the written statement. Seek a rejoinder from the complainant.',
     controls: [
-      { label: 'Call for Rejoinder', statusId: 22, attach: true },
+      { label: 'Call for Rejoinder', statusId: 22 },
     ],
   },
   {
@@ -168,8 +168,16 @@ const WORKFLOW_PANELS = [
     statuses: [23],
     icon: 'bi-reply-fill',
     title: 'Rejoinder Submitted by the Complainant',
-    caption: 'The complainant has replied to the written statement. Examine the rejoinder documents and assign an officer (UserType 7) for examination.',
-    controls: [{ label: 'Examine Documents and Assign Officer for Examination', statusId: 53, user: 'officer' }],
+    caption: 'The complainant has replied to the written statement. Select the Vetting Officer to examine the rejoinder and assign an examining officer.',
+    controls: [{ label: 'Select Vetting Officer for Examination', statusId: 133, user: 'vo' }],
+  },
+  {
+    roles: [13],
+    statuses: [133],
+    icon: 'bi-clipboard-check',
+    title: 'Assigned to Vetting Officer for Examination',
+    caption: 'Review the rejoinder and complaint documents, then assign an examining officer (UserType 7).',
+    controls: [{ label: 'Assign Examining Officer', statusId: 53, user: 'officer' }],
   },
   {
     roles: [5],
@@ -593,7 +601,6 @@ const INIT_MEMBER = {
 // Both replies are routed back to the SO who sought the statement.
 function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alreadySubmitted }) {
   const popup = usePopups();
-  const [mode, setMode] = useState(''); // '' | 'yes' | 'no'
   const [mapOpen, setMapOpen] = useState(false);
   const [states, setStates] = useState([]);
   const [cities, setCities] = useState([]);
@@ -606,27 +613,38 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
   const [respFile, setRespFile] = useState(null);
   const [respRemarks, setRespRemarks] = useState('');
   const [respBusy, setRespBusy] = useState(false);
+  const [firmMemberOptions, setFirmMemberOptions] = useState([]);
+  const [pickedFirmMember, setPickedFirmMember] = useState('');
+  const [assignBusy, setAssignBusy] = useState(false);
 
   const isFirm = Number(c.IsFirm) === 1;
   const answerable = c.answerable || [];
   const answerableWithEmail = answerable.filter((m) => m.MemEmailID && String(m.MemEmailID).trim());
   const hasAnswerableLogins = answerableWithEmail.length > 0;
-  const ask = isFirm && answerable.length === 0 && mode === '';
-  const showForm = isFirm && (mode === 'yes' || mapOpen);
   // In a firm complaint every answerable member acts as the respondent and
-  // files their own written statement. The firm's own respondent login may not
-  // submit on their behalf.
-  const canFile = !alreadySubmitted && (
-    !isFirm
-      ? true
-      : answerable.length === 0
-        ? mode === 'no'
-        : hasAnswerableLogins
-          ? !!isAnswerableMember
-          : true
-  );
+  // files their own written statement. The firm itself only adds / assigns
+  // answerable members and cannot submit the statement on their behalf.
+  const canFile = !alreadySubmitted && (!isFirm || !!isAnswerableMember);
   const waitingForMembers = isFirm && hasAnswerableLogins && !isAnswerableMember;
   const queryLetters = (c.statusHistory || []).filter((h) => Number(h.StatusID) === 15 && h.Attachment);
+
+  useEffect(() => {
+    if (!isFirm || isAnswerableMember) return;
+    api
+      .get(`/complaints/${compId}/answerable-options`)
+      .then((res) => setFirmMemberOptions(res.data || []))
+      .catch(() => setFirmMemberOptions([]));
+  }, [compId, isFirm, isAnswerableMember, answerable.length]);
+
+  const availableFirmMembers = firmMemberOptions.filter((m) => {
+    const reg = String(m.MemRegistrationNo || '').trim();
+    const email = String(m.MemEmailID || '').trim().toLowerCase();
+    return !answerable.some(
+      (a) =>
+        (reg && String(a.MemRegistrationNo || '').trim() === reg) ||
+        (email && String(a.MemEmailID || '').trim().toLowerCase() === email)
+    );
+  });
 
   const patchMember = (updates) => setMember((m) => ({ ...m, ...updates }));
 
@@ -750,15 +768,50 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
         ...member,
       });
       popup.success('Answerable member added successfully');
-      setMode('');
+      setMapOpen(false);
       setMember(INIT_MEMBER);
       setLookupNo('');
       setLookupDob('');
-      api.get(`/complaints/${id}`).then((res) => setC(res.data));
+      onRefresh();
     } catch (ex) {
       popup.error(ex?.response?.data?.error || 'Failed to add answerable member.');
     } finally {
       setAnsBusy(false);
+    }
+  };
+
+  const assignExistingMember = async () => {
+    const picked = firmMemberOptions.find((m) => String(m.AMemID) === String(pickedFirmMember));
+    if (!picked) {
+      popup.warning('Please select an answerable member.');
+      return;
+    }
+    setAssignBusy(true);
+    try {
+      await api.post(`/complaints/${compId}/answerable`, {
+        memName: picked.MemName,
+        memRegistrationNo: picked.MemRegistrationNo,
+        memCountryCode: picked.MemCountryCode || '91',
+        memMobileNo: picked.MemMobileNo,
+        memSTDCode: picked.MemSTDCode,
+        memLandlineNo: picked.MemLandlineNo,
+        memProAddress: picked.MemProAddress,
+        memCommAddress: picked.MemCommAddress,
+        memProState: picked.MemStateName,
+        memProCity: picked.MemCityName,
+        memCommStateId: picked.MemCommStateID,
+        memCommCityId: picked.MemCommCityID,
+        memProRegion: picked.MemProRegion,
+        memCommRegion: picked.MemCommRegion,
+        memEmailID: picked.MemEmailID,
+      });
+      popup.success('Answerable member assigned to this case.');
+      setPickedFirmMember('');
+      onRefresh();
+    } catch (ex) {
+      popup.error(ex?.response?.data?.error || 'Failed to assign the member.');
+    } finally {
+      setAssignBusy(false);
     }
   };
 
@@ -870,42 +923,13 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
         {isFirm && (
           <div className="small text-muted mb-3">
             <i className="bi bi-info-circle me-1" />
-            Registered as a firm with {answerable.length} answerable member(s). Each answerable member must file
-            their written statement separately.
+            {answerable.length === 0
+              ? 'This is a firm complaint. You must add at least one answerable member before the written statement can be filed.'
+              : `Registered as a firm with ${answerable.length} answerable member(s). Each answerable member must file their written statement separately.`}
           </div>
         )}
 
-        {ask && (
-          <div className="mb-4">
-            <label className="form-label small fw-semibold">Do you want to add Answerable members?</label>
-            <div className="radio-card-list mt-2">
-              <label className="radio-card">
-                <input
-                  className="form-check-input"
-                  type="radio"
-                  name="ansQuestion"
-                  id="ansYes"
-                  checked={mode === 'yes'}
-                  onChange={() => setMode('yes')}
-                />
-                <span className="radio-card-label">Yes</span>
-              </label>
-              <label className="radio-card">
-                <input
-                  className="form-check-input"
-                  type="radio"
-                  name="ansQuestion"
-                  id="ansNo"
-                  checked={mode === 'no'}
-                  onChange={() => setMode('no')}
-                />
-                <span className="radio-card-label">No</span>
-              </label>
-            </div>
-          </div>
-        )}
-
-        {isFirm && (answerable.length > 0 || mode === 'yes' || mapOpen) && (
+        {isFirm && !isAnswerableMember && (
           <div className="mb-4">
             {answerable.length > 0 && (
               <div className="table-responsive mb-2">
@@ -945,6 +969,36 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {availableFirmMembers.length > 0 && (
+              <div className="border rounded p-3 mb-3">
+                <label className="form-label small fw-semibold">Select a previously added answerable member</label>
+                <div className="d-flex flex-column flex-sm-row gap-2">
+                  <select
+                    className="form-select form-select-sm"
+                    value={pickedFirmMember}
+                    onChange={(e) => setPickedFirmMember(e.target.value)}
+                  >
+                    <option value="">--Select Answerable Member--</option>
+                    {availableFirmMembers.map((m) => (
+                      <option key={m.AMemID} value={m.AMemID}>
+                        {m.MemName} ({m.MemRegistrationNo || m.MemEmailID})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary text-nowrap"
+                    disabled={!pickedFirmMember || assignBusy}
+                    onClick={assignExistingMember}
+                  >
+                    {assignBusy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}
+                    <i className="bi bi-person-check me-1" />Assign to this case
+                  </button>
+                </div>
+                <div className="small text-muted mt-2">Not in the list? Add a new answerable member below.</div>
               </div>
             )}
 
@@ -1077,14 +1131,6 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
                   </button>
                 </div>
               </form>
-            )}
-
-            {ask && answerable.length === 0 && (
-              <div className="mt-2">
-                <button type="button" className="btn btn-link btn-sm p-0 small" onClick={() => setMode('no')}>
-                  No, I do not want to add answerable members
-                </button>
-              </div>
             )}
           </div>
         )}
@@ -1590,7 +1636,6 @@ export default function ComplaintDetail() {
   const [ddFile, setDdFile] = useState(null);
   const [ddBusy, setDdBusy] = useState(false);
   const [officers, setOfficers] = useState([]);
-  const [soEntity, setSoEntity] = useState('');
   const [soNatureOption, setSoNatureOption] = useState('');
   const [soNatureOther, setSoNatureOther] = useState('');
   const [soClubbing, setSoClubbing] = useState('Registration');
@@ -1635,7 +1680,7 @@ export default function ComplaintDetail() {
   const [placeRemarks, setPlaceRemarks] = useState('');
   const [placeBusy, setPlaceBusy] = useState(false);
   const [ddMembers, setDdMembers] = useState([]);
-  const [woMembers, setWoMembers] = useState([]);
+  const [voMembers, setVoMembers] = useState([]);
   const [scSheet, setScSheet] = useState({});
   const [sheetOpen, setSheetOpen] = useState(false);
   const [scBusy, setScBusy] = useState(false);
@@ -1673,7 +1718,7 @@ export default function ComplaintDetail() {
       .catch(() => {});
     api
       .get('/masters/6?option1=13')
-      .then((res) => setWoMembers(res.data || []))
+      .then((res) => setVoMembers(res.data || []))
       .catch(() => {});
     api
       .get('/masters/14')
@@ -1689,22 +1734,22 @@ export default function ComplaintDetail() {
 
   useEffect(() => {
     if (c) {
-      setSoEntity(c.EntityMisconduct || '');
       setSoNatureOption(c.NatureOfAllegation || '');
       setSoNatureOther(c.NatureDatails || '');
       if (c.ScrutinySheet) {
         try {
-          setScSheet(JSON.parse(c.ScrutinySheet));
+          const parsed = JSON.parse(c.ScrutinySheet);
+          setScSheet({ ...parsed, entity: parsed.entity || c.EntityMisconduct || '' });
         } catch {
-          setScSheet({});
+          setScSheet({ entity: c.EntityMisconduct || '' });
         }
       } else {
         // Nothing saved yet - pull the auto-filled sheet so every factual cell
         // is already populated before the Scrutiny Officer starts.
-        setScSheet({});
+        setScSheet({ entity: c.EntityMisconduct || '' });
         api
           .get(`/complaints/${id}/scrutiny/prefill`)
-          .then((res) => setScSheet(res.data || {}))
+          .then((res) => setScSheet((prev) => ({ ...(res.data || {}), entity: prev.entity || c.EntityMisconduct || '' })))
           .catch(() => {});
       }
     }
@@ -1740,7 +1785,7 @@ export default function ComplaintDetail() {
 
   const closeClubbedModal = () => setClubbedModal(null);
 
-  const wfMembers = { so: soMembers, officer: officers, ro: roMembers, bod: bodMembers };
+  const wfMembers = { so: soMembers, vo: voMembers, officer: officers, ro: roMembers, bod: bodMembers };
 
   const workflowTransition = async ({ statusId, userToId, remarks, file, commonField, decisionValue, clubbedWithCompId }) => {
     let attachment = null;
@@ -1769,6 +1814,20 @@ export default function ComplaintDetail() {
   const scSheetSaved = !!(c?.ScrutinySheet && c.ScrutinySheet.trim());
 
   const saveScrutinySheet = async () => {
+    if (!String(scSheet?.entity || '').trim()) {
+      popup.warning('Please enter Entity in respect of which misconduct alleged.');
+      return;
+    }
+    if (scSheet?.isAudioVideo === '1') {
+      if (!Array.isArray(scSheet.audioVideo) || scSheet.audioVideo.length === 0) {
+        popup.warning('Please upload Audio/Video Evidence.');
+        return;
+      }
+      if (!String(scSheet.digitalEvidenceCert || '').trim()) {
+        popup.warning('Please upload Digital Evidence Certificate.');
+        return;
+      }
+    }
     if (!scSheet || !Object.keys(scSheet).some((k) => String(scSheet[k] || '').trim() !== '')) {
       popup.warning('Please fill the Scrutiny Sheet before submitting.');
       return;
@@ -1776,9 +1835,12 @@ export default function ComplaintDetail() {
     setScBusy(true);
     try {
       await api.put(`/complaints/${id}/scrutiny`, {
-        entityMisconduct: soEntity.trim(),
+        entityMisconduct: String(scSheet.entity || '').trim(),
         natureOfAllegation: soNatureOption,
         natureDetails: soNatureOther.trim(),
+        isAudioVideo: scSheet.isAudioVideo === '1' ? '1' : '0',
+        audioVideo: Array.isArray(scSheet.audioVideo) ? scSheet.audioVideo : [],
+        digitalEvidenceCert: String(scSheet.digitalEvidenceCert || '').trim(),
         scrutinySheet: scSheet,
       });
       popup.success('Scrutiny Sheet submitted successfully');
@@ -1909,10 +1971,6 @@ export default function ComplaintDetail() {
 
    const submitSoAction = async (e) => {
      e.preventDefault();
-     if (!soEntity.trim()) {
-       popup.warning('Please enter Entity in respect of which misconduct alleged.');
-       return;
-     }
      if (!soRemarks.trim()) {
        popup.warning('Please enter remarks.');
        return;
@@ -1945,14 +2003,11 @@ export default function ComplaintDetail() {
        popup.warning('Please select Recommendation Clubbing/Closure.');
        return;
      }
-     if (soAction === 'assignOfficer' && !soOfficer) {
-       popup.warning('Please select a Officer.');
-       return;
-     }
-     if (soAction === 'recommendDD' && woMembers.length === 0) {
-       popup.warning('No Vetting Officer (VO) account found. Please create a VO user (UserType 13).');
-       return;
-     }
+      if (soAction === 'assignOfficer' && !soOfficer) {
+        popup.warning('Please select a Officer.');
+        return;
+      }
+
     if (soFile) {
       const ext = soFile.name.split('.').pop().toLowerCase();
       if (ext !== 'pdf') {
@@ -1984,7 +2039,7 @@ export default function ComplaintDetail() {
         return;
       }
       await api.put(`/complaints/${id}/scrutiny`, {
-        entityMisconduct: soEntity.trim(),
+        entityMisconduct: String(scSheet?.entity || '').trim(),
         natureOfAllegation: soNatureOption,
         natureDetails: soNatureOther.trim(),
       });
@@ -1999,12 +2054,11 @@ export default function ComplaintDetail() {
         statusId = 3;
         userToId = c.UserID;
       } else if (soAction === 'recommendDD') {
-        // DC Flow #103: NO DEFECT -> Recommend to WO (Status 124). The Working
-        // Officer then reviews and forwards the recommendation to the DD (Status 5)
-        // or sends it back to the SO. The recommendation type (CommonField) is
-        // carried for the DD decision.
+        // DC Flow #103: NO DEFECT -> Recommend to WO (Status 124). The backend
+        // resolves the fixed Working Officer and auto-approves the recommendation,
+        // forwarding it straight to the Director Discipline (Status 5).
         statusId = 124;
-        userToId = woMembers.length ? Number(woMembers[0].value) : null;
+        userToId = null;
       } else {
         statusId = 53;
         userToId = Number(soOfficer);
@@ -2020,7 +2074,7 @@ export default function ComplaintDetail() {
       const clubbedWithCompId = isClubbingRecommendation ? prevCompId : undefined;
       const clubRule =
         isClubbingRecommendation && prevCompId ? deriveRule54(prevCandidate?.StatusID) : undefined;
-      await api.post(`/complaints/${id}/status`, {
+      const statusRes = await api.post(`/complaints/${id}/status`, {
         statusId,
         userToId,
         remarks: soRemarks.trim(),
@@ -2029,7 +2083,11 @@ export default function ComplaintDetail() {
         clubbedWithCompId,
         clubRule,
       });
-      popup.success('Action taken successfully...');
+      popup.success(
+        statusRes.data?.autoForwarded
+          ? 'Recommendation auto-approved by the Vetting Officer and forwarded to the Director Discipline.'
+          : 'Action taken successfully...'
+      );
       setSoRemarks('');
       setSoFile(null);
       setSoAction('');
@@ -2138,13 +2196,13 @@ export default function ComplaintDetail() {
     }
     setDdClubbingBusy(true);
     try {
-      await api.post(`/complaints/${id}/status`, {
+      const decisionRes = await api.post(`/complaints/${id}/status`, {
         statusId: target,
         userToId,
         remarks: `${remarks} - DD ${agree ? 'Agreed to' : 'Disagreed with'} ${soRecType}`,
         commonField,
       });
-      popup.success(msg);
+      popup.success(decisionRes.data?.message || msg);
       setDd54Choice('');
       setWfCommittee('');
       setDdClubbingRemarks('');
@@ -3227,6 +3285,7 @@ export default function ComplaintDetail() {
                     <th>Status</th>
                     <th>Date</th>
                     <th>By</th>
+                    <th>Assigned To</th>
                     <th>Remarks</th>
                     <th>Attachment</th>
                   </tr>
@@ -3237,6 +3296,7 @@ export default function ComplaintDetail() {
                       <td><span className={`badge-soft ${badgeTone(h.StatusName)}`}>{statusLabel(h.StatusName, h.StatusID)}</span></td>
                       <td className="text-muted">{h.StatusDate ? new Date(h.StatusDate).toLocaleString() : '—'}</td>
                       <td className="text-muted">{h.ByUserName || h.UserID || '—'}</td>
+                      <td className="text-muted">{h.ToUserName || h.UserToID || '—'}</td>
                       <td className="text-muted rich-remark">
                         {h.IsSyntheticClubbing ? (
                           'This case clubbed with your case.'
@@ -3279,15 +3339,19 @@ export default function ComplaintDetail() {
                   <div className="small text-muted fw-semibold">Current Stage</div>
                   <span className={`summary-badge badge-soft ${badgeTone(c.StatusName)} mt-1`}>{statusLabel(c.StatusName, c.StatusID)}</span>
                 </div>
-                <div className="summary-row">
-                  <span className="summary-label small text-muted">Days in system</span>
-                  <span className="summary-value fw-semibold">{days ?? '—'} days</span>
-                </div>
-                {perDays != null && (
-                  <div className="summary-row">
-                    <span className="summary-label small text-muted">Days since PFO</span>
-                    <span className="summary-value fw-semibold">{perDays} days</span>
-                  </div>
+                {!isExternalParty && (
+                  <>
+                    <div className="summary-row">
+                      <span className="summary-label small text-muted">Days in system</span>
+                      <span className="summary-value fw-semibold">{days ?? '—'} days</span>
+                    </div>
+                    {perDays != null && (
+                      <div className="summary-row">
+                        <span className="summary-label small text-muted">Days since PFO</span>
+                        <span className="summary-value fw-semibold">{perDays} days</span>
+                      </div>
+                    )}
+                  </>
                 )}
                 <div className="summary-row">
                   <span className="summary-label small text-muted">Complaint type</span>
@@ -3298,7 +3362,7 @@ export default function ComplaintDetail() {
                   <span className="summary-value fw-semibold">{c.ComplainantName || '—'}</span>
                 </div>
                 <div className="summary-row">
-                  <span className="summary-label small text-muted">Taxable amount</span>
+                  <span className="summary-label small text-muted">{isExternalParty ? 'Amount paid' : 'Taxable amount'}</span>
                   <span className="summary-value fw-semibold">{fmtMoney(c.TaxableAmount)}</span>
                 </div>
               </div>
@@ -3322,12 +3386,6 @@ export default function ComplaintDetail() {
               </div>
               <div className="card-body">
                 <form onSubmit={submitSoAction}>
-                  <div className="mb-3">
-                    <label className="form-label small fw-semibold">
-                      Entity in respect of which misconduct alleged <span className="text-danger">*</span>
-                    </label>
-                    <input className="form-control" value={soEntity} onChange={(e) => setSoEntity(e.target.value)} required />
-                  </div>
                   <div className="mb-3">
                     <label className="form-label small fw-semibold">
                       Nature of allegation

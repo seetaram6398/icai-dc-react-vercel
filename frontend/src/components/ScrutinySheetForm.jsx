@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { uploadFile } from '../api/upload';
+import { usePopups } from './Popup';
 
 const RADIO_SETS = [
   ['mode', { left: 'By Hand', right: 'By Post/Courier' }],
@@ -68,7 +70,13 @@ const TEXT_FIELDS = [
 ];
 
 const EMPTY = () => {
-  const d = { cno: '' };
+  const d = {
+    cno: '',
+    entity: '',
+    isAudioVideo: '0',
+    audioVideo: [],
+    digitalEvidenceCert: '',
+  };
   RADIO_SETS.forEach(([k]) => (d[k] = ''));
   DATE_FIELDS.forEach((k) => (d[k] = ''));
   TEXT_FIELDS.forEach((k) => (d[k] = ''));
@@ -104,8 +112,66 @@ function Seg({ name, value, opts, onChange }) {
 
 function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, message, onClear, onDownload }) {
   const [printWin, setPrintWin] = useState(null);
+  const popup = usePopups();
   const d = value || EMPTY();
   const set = (k) => (v) => onChange({ ...d, [k]: v });
+
+  const onAudioUpload = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    const allowed = ['.mp3', '.wav', '.mp4', '.wmv', '.avi'];
+    if (!allowed.some((a) => f.name.toLowerCase().endsWith(a))) {
+      popup.warning('Only MP3, WAV, MP4, WMV, AVI files allowed');
+      return;
+    }
+    if (f.size > 15 * 1024 * 1024) {
+      popup.warning('File size should not be greater than 15mb');
+      return;
+    }
+    try {
+      const data = await uploadFile(f, 'audiovideo');
+      onChange({
+        ...d,
+        isAudioVideo: '1',
+        audioVideo: [...(d.audioVideo || []), { attachment: data.relativePath || data.path, fileName: f.name }],
+      });
+    } catch (_) {
+      popup.error('Upload failed');
+    }
+  };
+
+  const onCertUpload = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith('.pdf')) {
+      popup.warning('Only .pdf file format supported');
+      return;
+    }
+    if (f.size > 10 * 1024 * 1024) {
+      popup.warning('File size should be less than 10 MB');
+      return;
+    }
+    try {
+      const data = await uploadFile(f, 'digicert');
+      onChange({ ...d, digitalEvidenceCert: data.relativePath || data.path });
+    } catch (_) {
+      popup.error('Upload failed');
+    }
+  };
+
+  const removeAudio = (index) => {
+    onChange({ ...d, audioVideo: (d.audioVideo || []).filter((_, i) => i !== index) });
+  };
+
+  const onAudioVideoChange = (v) => {
+    onChange({
+      ...d,
+      isAudioVideo: v,
+      ...(v === '0' ? { audioVideo: [], digitalEvidenceCert: '' } : {}),
+    });
+  };
 
   const doPrint = () => {
     if (!printWin || printWin.closed) {
@@ -133,6 +199,7 @@ function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, 
     w.document.write('<h1>SCRUTINY SHEET</h1>');
     w.document.write('<p class="sub">(In terms of the Chartered Accountants (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007)</p>');
     w.document.write(`<p class="cno">Complaint No. : ${d.cno || complaintNo || ''}</p>`);
+    w.document.write(`<p class="cno">Entity in respect of which misconduct alleged : ${String(d.entity || '')}</p>`);
     w.document.write('<table>');
     const row = (num, label, val) =>
       `<tr><td class="n">${num}</td><td class="q">${label}</td><td class="v"><div class="val">${String(val || '')}</div></td></tr>`;
@@ -239,6 +306,97 @@ function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, 
         <div className="mb-3" style={{ maxWidth: 400 }}>
           <label className="form-label small fw-semibold">Complaint No.</label>
           <input className="form-control" value={d.cno || complaintNo || ''} readOnly />
+        </div>
+
+        <div className="card mb-3">
+          <div className="card-header bg-warning text-dark fw-semibold">
+            <i className="bi bi-building me-2" />Entity in respect of which misconduct alleged
+          </div>
+          <div className="card-body">
+            <label className="form-label small fw-semibold">
+              Entity in respect of which misconduct alleged <span className="text-danger">*</span>
+            </label>
+            <input
+              className="form-control"
+              value={d.entity || ''}
+              onChange={(e) => set('entity')(e.target.value)}
+              placeholder="Entity in respect of which misconduct alleged."
+            />
+          </div>
+        </div>
+
+        <div className="card mb-3">
+          <div className="card-header bg-primary text-white fw-semibold">
+            <i className="bi bi-camera-video me-2" />Audio/Video Attachment
+          </div>
+          <div className="card-body">
+            <div className="row g-3">
+              <div className="col-md-4">
+                <label className="form-label small fw-semibold">Do you have Audio/Video Evidence?</label>
+                <select
+                  className="form-select"
+                  value={d.isAudioVideo || '0'}
+                  onChange={(e) => onAudioVideoChange(e.target.value)}
+                >
+                  <option value="0">No</option>
+                  <option value="1">Yes</option>
+                </select>
+              </div>
+              {d.isAudioVideo === '1' && (
+                <>
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">Upload Audio/Video *</label>
+                    <input
+                      type="file"
+                      className="form-control form-control-sm"
+                      accept=".mp3,.wav,.mp4,.wmv,.avi"
+                      onChange={onAudioUpload}
+                    />
+                    <div className="form-text">MP3, WAV, MP4, WMV, AVI — max 15 MB</div>
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">Upload Digital Evidence Certificate *</label>
+                    <input
+                      type="file"
+                      className="form-control form-control-sm"
+                      accept=".pdf"
+                      onChange={onCertUpload}
+                    />
+                    <div className="form-text">PDF — max 10 MB</div>
+                    {d.digitalEvidenceCert && (
+                      <div className="small mt-1">
+                        {String(d.digitalEvidenceCert).split(/[\\/]/).pop()}
+                        <button
+                          type="button"
+                          className="btn btn-link btn-sm text-danger p-0 ms-2"
+                          onClick={() => set('digitalEvidenceCert')('')}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            {(d.audioVideo || []).length > 0 && (
+              <table className="table table-sm table-bordered mt-3 mb-0">
+                <thead><tr><th>Audio/Video File</th><th>Action</th></tr></thead>
+                <tbody>
+                  {(d.audioVideo || []).map((a, i) => (
+                    <tr key={i}>
+                      <td>{a.fileName || String(a.attachment || '').split(/[\\/]/).pop()}</td>
+                      <td>
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => removeAudio(i)}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
         <div className="table-responsive mb-3" style={{ border: '1px solid #c7dcef', borderRadius: 10 }}>

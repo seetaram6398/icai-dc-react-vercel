@@ -55,3 +55,6 @@ build/
 *.pid
 .vercel
 .env*
+
+# Local database backups
+backend/backups/

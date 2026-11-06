@@ -6,7 +6,7 @@ const { query, executeNonQuery } = require('../config/db');
  */
 async function lookupRespondentByEmail(email) {
   const rows = await query(
-    `SELECT TOP 1 CompID, ResName, ResRegistrationNo, ResMobileNo, ResEmailID, RCityName
+    `SELECT TOP 1 CompID, ResName, NameofFirm, IsFirm, ResRegistrationNo, ResMobileNo, ResEmailID, RCityName
      FROM tbl_NewComplaint
      WHERE LOWER(LTRIM(RTRIM(ResEmailID)))=@email AND (IsTemp IS NULL OR IsTemp = 0)
      ORDER BY CompID DESC`,
@@ -96,8 +96,9 @@ async function ensurePartyUser(party) {
  */
 async function ensureRespondentUserFromRow(row) {
   if (!row) return null;
+  const isFirm = Number(row.IsFirm) === 1;
   return ensurePartyUser({
-    name: row.ResName || 'Respondent',
+    name: (isFirm ? row.NameofFirm : row.ResName) || 'Respondent',
     email: row.ResEmailID,
     mobile: row.ResMobileNo,
     membershipNo: row.ResRegistrationNo,
@@ -160,7 +161,7 @@ async function ensureRespondentUserByEmail(email) {
  */
 async function ensureRespondentUserForComplaint(compId) {
   const rows = await query(
-    `SELECT TOP 1 CompID, ResName, ResRegistrationNo, ResMobileNo, ResEmailID, RCityName
+    `SELECT TOP 1 CompID, ResName, NameofFirm, IsFirm, ResRegistrationNo, ResMobileNo, ResEmailID, RCityName
      FROM tbl_NewComplaint
      WHERE CompID=@id AND (IsTemp IS NULL OR IsTemp = 0)`,
     { id: Number(compId) }

@@ -14,6 +14,10 @@ const blob = process.env.BLOB_READ_WRITE_TOKEN ? require('@vercel/blob') : null;
 
 const app = express();
 
+// Behind the Vercel proxy, req.ip would otherwise be the proxy address.
+// Trust the forwarding headers so the audit trail records the real client IP.
+app.set('trust proxy', true);
+
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));

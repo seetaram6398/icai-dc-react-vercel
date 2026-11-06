@@ -83,7 +83,6 @@ export default function Register() {
   const [non, setNon] = useState({
     govOff: '',
     name: '',
-    dob: '',
     mobile: '',
     email: '',
     categoryId: '',
@@ -241,10 +240,6 @@ export default function Register() {
       popup.warning('Please enter name...');
       return;
     }
-    if (non.govOff === '0' && !parseDDMMYYYY(non.dob)) {
-      popup.warning('Please enter valid Date of Birth...');
-      return;
-    }
     if (non.mobile.length !== 10 || !/^\d+$/.test(non.mobile)) {
       popup.warning('Please enter mobile no...');
       return;
@@ -254,17 +249,7 @@ export default function Register() {
       return;
     }
     if (non.govOff === '1') {
-      if (!non.categoryId) return popup.warning('Please select Government Category...');
-      if (!non.regulatorId) return popup.warning('Please select Regulator/Office...');
-      if (!non.nameOfOffice.trim()) return popup.warning('Please enter Name of Officer...');
-      if (!non.designation.trim()) return popup.warning('Please enter Designation...');
-      if (!non.govId.trim()) return popup.warning('Please enter Government ID No. ...');
-      if (!non.countryCode) return popup.warning('Please select country code...');
-      if (!non.address.trim()) return popup.warning('Please enter Flat, House no., Building, Company, Apartment...');
-      if (!non.area.trim()) return popup.warning('Please enter Area...');
-      if (!non.stateId) return popup.warning('Please select state...');
-      if (!non.cityId) return popup.warning('Please select city...');
-      if (non.pincode.length !== 6 || !/^\d+$/.test(non.pincode)) return popup.warning('Please enter pincode...');
+      // Government entity registration only needs name, mobile and email.
     }
 
     setBusy(true);
@@ -276,27 +261,6 @@ export default function Register() {
         mobile: non.mobile,
         isICAIMember: false,
         isGovEmp: isGov,
-        dob: non.govOff === '0' ? parseDDMMYYYY(non.dob) : undefined,
-        governmentFields: isGov
-          ? {
-              office: non.nameOfOffice.trim(),
-              designation: non.designation.trim(),
-              govId: non.govId.trim(),
-              address: non.address.trim(),
-              area: non.area.trim(),
-              landmark: non.landmark.trim(),
-              stateId: non.stateId,
-              cityId: non.cityId,
-              pincode: non.pincode,
-              countryCode: non.countryCode,
-              stdCode: non.stdCode,
-              landlineNo: non.landlineNo,
-              region: non.region,
-              compType: non.categoryId,
-              regulatorId: non.regulatorId,
-              regulatorName: non.regulatorName,
-            }
-          : undefined,
       };
       const res = await register(payload);
       if (res.emailSent === false && res.otp) {
@@ -559,16 +523,6 @@ export default function Register() {
                             <input className="reg-input" value={non.name} onChange={setNonF('name')} maxLength={100} required />
                           </div>
                           <div className="reg-field">
-                            <label>Date of Birth <span className="reg-required">*</span></label>
-                            <input
-                              className="reg-input"
-                              placeholder="DD/MM/YYYY"
-                              value={non.dob}
-                              onChange={setNonF('dob')}
-                              required
-                            />
-                          </div>
-                          <div className="reg-field">
                             <label>Mobile No. <span className="reg-required">*</span></label>
                             <input
                               className="reg-input"
@@ -593,7 +547,7 @@ export default function Register() {
                             <input className="reg-input" value={non.name} onChange={setNonF('name')} maxLength={100} required />
                           </div>
                           <div className="reg-field">
-                            <label>Department Mobile No. <span className="reg-required">*</span></label>
+                            <label>Mobile No. <span className="reg-required">*</span></label>
                             <input
                               className="reg-input"
                               value={non.mobile}
@@ -604,114 +558,8 @@ export default function Register() {
                             />
                           </div>
                           <div className="reg-field">
-                            <label>Department Email ID <span className="reg-required">*</span></label>
+                            <label>Email ID <span className="reg-required">*</span></label>
                             <input type="email" className="reg-input" value={non.email} onChange={setNonF('email')} maxLength={50} required />
-                          </div>
-                          <div className="reg-field reg-span-2">
-                            <label>Type of Government Category <span className="reg-required">*</span></label>
-                            <select className="reg-input" value={non.categoryId} onChange={loadGovCategory}>
-                              <option value="">--Select--</option>
-                              {categories.map((c) => (
-                                <option key={c.value} value={c.value}>{c.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="reg-field reg-span-2">
-                            <label>Government Department/Regulatory Authority/Statutory Authority/Office <span className="reg-required">*</span></label>
-                            <select
-                              className="reg-input"
-                              value={non.regulatorId}
-                              onChange={(e) => {
-                                const r = regulators.find((x) => String(x.value) === String(e.target.value));
-                                setNon({ ...non, regulatorId: e.target.value, regulatorName: r ? r.label : '' });
-                              }}
-                              disabled={!non.categoryId}
-                            >
-                              <option value="">--Select--</option>
-                              {regulators.map((r) => (
-                                <option key={r.value} value={r.value}>{r.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="reg-field reg-span-2">
-                            <label>Name of Government Department/Regulatory Authority/Statutory Authority Officer <span className="reg-required">*</span></label>
-                            <input className="reg-input" value={non.nameOfOffice} onChange={setNonF('nameOfOffice')} maxLength={450} required />
-                          </div>
-                          <div className="reg-field">
-                            <label>Employee ID No. <span className="reg-required">*</span></label>
-                            <input className="reg-input" value={non.govId} onChange={setNonF('govId')} maxLength={20} required />
-                          </div>
-                          <div className="reg-field">
-                            <label>Designation <span className="reg-required">*</span></label>
-                            <input className="reg-input" value={non.designation} onChange={setNonF('designation')} maxLength={50} required />
-                            <small className="reg-hint">Not below the rank of under secretary or equivalent</small>
-                          </div>
-                          <div className="reg-field">
-                            <label>Country Code <span className="reg-required">*</span></label>
-                            <select className="reg-input" value={non.countryCode} onChange={setNonF('countryCode')}>
-                              <option value="91">91</option>
-                              <option value="">--Select--</option>
-                            </select>
-                          </div>
-                          <div className="reg-field">
-                            <label>STD Code</label>
-                            <input className="reg-input" value={non.stdCode} onChange={(e) => setNon({ ...non, stdCode: e.target.value.replace(/\D/g, '') })} maxLength={4} />
-                          </div>
-                          <div className="reg-field">
-                            <label>Landline No</label>
-                            <input className="reg-input" value={non.landlineNo} onChange={(e) => setNon({ ...non, landlineNo: e.target.value.replace(/\D/g, '') })} maxLength={10} />
-                          </div>
-                          <div className="reg-field reg-span-2">
-                            <label>Flat, House no., Building, Company, Apartment <span className="reg-required">*</span></label>
-                            <input className="reg-input" value={non.address} onChange={setNonF('address')} maxLength={200} required />
-                          </div>
-                          <div className="reg-field reg-span-2">
-                            <label>Area, Street, Sector, Village <span className="reg-required">*</span></label>
-                            <input className="reg-input" value={non.area} onChange={setNonF('area')} maxLength={500} required />
-                          </div>
-                          <div className="reg-field reg-span-2">
-                            <label>Landmark</label>
-                            <input className="reg-input" value={non.landmark} onChange={setNonF('landmark')} maxLength={90} />
-                          </div>
-                          <div className="reg-field">
-                            <label>State <span className="reg-required">*</span></label>
-                            <select className="reg-input" value={non.stateId} onChange={setState}>
-                              <option value="">--Select--</option>
-                              {states.map((s) => (
-                                <option key={s.value} value={s.value}>{s.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="reg-field">
-                            <label>City <span className="reg-required">*</span></label>
-                            <select className="reg-input" value={non.cityId} onChange={(e) => {
-                              const cityId = e.target.value;
-                              setNon((prev) => ({ ...prev, cityId }));
-                            }} disabled={!non.stateId}>
-                              <option value="">--Select--</option>
-                              {cities.map((ct) => (
-                                <option key={ct.value} value={ct.value}>{ct.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="reg-field">
-                            <label>Pincode <span className="reg-required">*</span></label>
-                            <input
-                              className="reg-input"
-                              value={non.pincode}
-                              onChange={(e) => setNon({ ...non, pincode: e.target.value.replace(/\D/g, '') })}
-                              maxLength={6}
-                              required
-                            />
-                          </div>
-                          <div className="reg-field">
-                            <label>Region <span className="reg-required">*</span></label>
-                            <select className="reg-input" value={non.region} disabled>
-                              <option value="">--</option>
-                              {REGIONS.map((r) => (
-                                <option key={r} value={r}>{r}</option>
-                              ))}
-                            </select>
                           </div>
                         </>
                       )}

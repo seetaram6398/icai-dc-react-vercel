@@ -48,10 +48,24 @@ export default function Dashboard() {
   const [statuses, setStatuses] = useState([]);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(true);
+  const [partyTotals, setPartyTotals] = useState({ total: 0, actionPending: 0 });
   const ut = Number(user?.UserType);
+  const isPartyDashboard = ut === 2 || ut === 3;
 
   const fetchDashboard = (f) => {
     setLoading(true);
+    if (isPartyDashboard) {
+      Promise.all([api.get('/complaints'), api.get('/complaints?actionPending=1')])
+        .then(([all, pending]) => {
+          setPartyTotals({
+            total: (all.data || []).length,
+            actionPending: (pending.data || []).length,
+          });
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+      return;
+    }
     const p = new URLSearchParams();
     if (f.dateFrom) p.set('dateFrom', f.dateFrom);
     if (f.dateTo) p.set('dateTo', f.dateTo);
@@ -72,8 +86,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboard(filters);
-    api.get('/masters/2').then((res) => setCompTypes(res.data || [])).catch(() => {});
-    api.get('/masters/12').then((res) => setStatuses(res.data || [])).catch(() => {});
+    if (!isPartyDashboard) {
+      api.get('/masters/2').then((res) => setCompTypes(res.data || [])).catch(() => {});
+      api.get('/masters/12').then((res) => setStatuses(res.data || [])).catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -105,6 +121,12 @@ export default function Dashboard() {
   };
 
   const activeFilters = filterCount(filters);
+  const cardKey = (path) => (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      navigate(path);
+    }
+  };
 
   return (
     <div>
@@ -143,7 +165,46 @@ export default function Dashboard() {
       </div>
 
       {/* Stat summary cards */}
-      {!loading && displayRows.length > 0 && (
+      {!loading && isPartyDashboard && (
+        <div className="stat-row">
+          <div
+            className="stat-box stat-box-clickable"
+            style={{ borderLeft: '3px solid #1a4a8a' }}
+            role="button"
+            tabIndex={0}
+            title="View all complaints"
+            onClick={() => navigate('/complaints')}
+            onKeyDown={cardKey('/complaints')}
+          >
+            <div className="stat-box-icon" style={{ background: '#e8effa', color: '#1a4a8a' }}>
+              <i className="bi bi-folder2-open" />
+            </div>
+            <div>
+              <div className="stat-box-value">{partyTotals.total.toLocaleString('en-IN')}</div>
+              <div className="stat-box-label">Total Complaints</div>
+            </div>
+          </div>
+          <div
+            className="stat-box stat-box-clickable"
+            style={{ borderLeft: '3px solid #dc2626' }}
+            role="button"
+            tabIndex={0}
+            title="View cases where your action is pending"
+            onClick={() => navigate('/complaints?actionPending=1')}
+            onKeyDown={cardKey('/complaints?actionPending=1')}
+          >
+            <div className="stat-box-icon" style={{ background: '#fdecec', color: '#dc2626' }}>
+              <i className="bi bi-x-octagon" />
+            </div>
+            <div>
+              <div className="stat-box-value">{partyTotals.actionPending.toLocaleString('en-IN')}</div>
+              <div className="stat-box-label">No Action Taken</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!loading && !isPartyDashboard && displayRows.length > 0 && (
         <div className="stat-row">
           <div className="stat-box" style={{ borderLeft: '3px solid #1a4a8a' }}>
             <div className="stat-box-icon" style={{ background: '#e8effa', color: '#1a4a8a' }}>
@@ -184,6 +245,8 @@ export default function Dashboard() {
         </div>
       )}
 
+      {!isPartyDashboard && (
+        <>
       {/* Filter panel */}
       <div className="card ds-card mb-4">
         <div
@@ -362,6 +425,8 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

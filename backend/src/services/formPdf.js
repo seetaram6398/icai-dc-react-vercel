@@ -316,6 +316,16 @@ async function buildComplaintPdf(id, opts) {
   const isIndividual = String(c.CompTypeName || '').trim().toLowerCase() === 'individual';
   const isFirm = Number(c.IsFirm) === 1;
 
+  const verificationDate = c.VerificationDate ? new Date(c.VerificationDate) : (c.EntryDate ? new Date(c.EntryDate) : null);
+  const verificationDay = verificationDate && !Number.isNaN(verificationDate.getTime())
+    ? String(verificationDate.getDate()).padStart(2, '0')
+    : '________';
+  const verificationMonthYear = verificationDate && !Number.isNaN(verificationDate.getTime())
+    ? verificationDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+    : '________';
+  const verificationTime = detail(c.VerificationTime) || '________';
+  const verificationPlace = detail(c.VerificationPlace) || detail(c.CompCityName) || '________';
+
   const compAddressLines = [c.Address, c.Area, c.Landmark].filter((v) => sanitize(v));
   const compAddressFull = compAddressLines.join('\n');
   const compStateCity = [c.CompStateName, c.CompCityName].filter((v) => sanitize(v)).join(', ');
@@ -476,9 +486,10 @@ async function buildComplaintPdf(id, opts) {
       tcell(COLS[2], detail(c.EntityMisconduct)),
     ]},
 
-    // Date / Place / Signature
-    { cells: [tcell(COLS[0], ''), tcell(COLS[1], 'Date:'), tcell(COLS[2], fmtD(c.EntryDate) || '—')] },
-    { cells: [tcell(COLS[0], ''), tcell(COLS[1], 'Place:'), tcell(COLS[2], detail(c.CompCityName) || '—')] },
+    // Date / Time / Place / Signature
+    { cells: [tcell(COLS[0], ''), tcell(COLS[1], 'Date:'), tcell(COLS[2], fmtD(c.VerificationDate || c.EntryDate) || '—')] },
+    { cells: [tcell(COLS[0], ''), tcell(COLS[1], 'Time:'), tcell(COLS[2], verificationTime)] },
+    { cells: [tcell(COLS[0], ''), tcell(COLS[1], 'Place:'), tcell(COLS[2], verificationPlace)] },
     { cells: [
       tcell(COLS[0], ''),
       tcell(COLS[1], 'Signature of the Complainant:', { bold: true }),
@@ -505,9 +516,7 @@ async function buildComplaintPdf(id, opts) {
     ]},
     {
       cells: [tcell(CW,
-        `Verified today the ${fmtD(c.EntryDate) ? fmtD(c.EntryDate).split('/')[0] : '________'} day of ${
-          c.EntryDate ? new Date(c.EntryDate).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : '________'
-        } at ${detail(c.CompCityName) || '________'}`, { align: 'c', size: 9 })],
+        `Verified today the ${verificationDay} day of ${verificationMonthYear} at ${verificationPlace}`, { align: 'c', size: 9 })],
     },
     { cells: [
       tcell(COLS[0], ''),

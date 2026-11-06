@@ -138,6 +138,15 @@
   transform: translateY(-1px);
 }
 
+.stat-box-clickable {
+  cursor: pointer;
+}
+
+.stat-box-clickable:focus-visible {
+  outline: 2px solid var(--ds-primary, #1a4a8a);
+  outline-offset: 2px;
+}
+
 .stat-box-icon {
   width: 40px;
   height: 40px;
