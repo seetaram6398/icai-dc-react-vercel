@@ -2422,6 +2422,7 @@ router.put('/:id/scrutiny', async (req, res) => {
   try {
     const id = req.params.id;
     const entityMisconduct = (req.body.entityMisconduct || '').trim();
+    const hasEntityField = Object.prototype.hasOwnProperty.call(req.body, 'entityMisconduct');
     const natureOfAllegation = (req.body.natureOfAllegation || '').trim();
     const natureDetails = (req.body.natureDetails || '').trim();
     const scrutinySheet =
@@ -2441,7 +2442,7 @@ router.put('/:id/scrutiny', async (req, res) => {
 
     const sets = [];
     const p = { id };
-    if (entityMisconduct) {
+    if (hasEntityField) {
       sets.push('EntityMisconduct=@entity');
       p.entity = entityMisconduct;
     }

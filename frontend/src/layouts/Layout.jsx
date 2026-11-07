@@ -75,7 +75,8 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState({ viewComplaints: true, fileComplaint: true });
   const ut = Number(user?.UserType);
-  const roleLabel = ROLE_LABELS[ut] || `Role ${ut}`;
+  const isFirmUser = Number(user?.IsFirmUser) === 1;
+  const roleLabel = isFirmUser ? 'Firm' : (ROLE_LABELS[ut] || `Role ${ut}`);
 
   const handleLogout = () => {
     logout();
@@ -154,7 +155,9 @@ export default function Layout() {
   const fileComplaintLabel = ut === 4 ? 'Suo Moto' : [2, 3].includes(ut) ? 'Add New Complaint' : 'File Complaint';
   const currentLabel = pageTitle === '/file-complaint'
     ? fileComplaintLabel
-    : (pageTitle ? PAGE_LABELS[pageTitle] : 'Home');
+    : pageTitle === '/my-complaints' && isFirmUser
+      ? 'My Cases'
+      : (pageTitle ? PAGE_LABELS[pageTitle] : 'Home');
 
   return (
     <div className="admin-app">
@@ -279,7 +282,7 @@ export default function Layout() {
 
               {FULL_UT.concat(6).includes(ut) && link('/bod-dashboard', 'BOD Dashboard', 'person-badge')}
 
-              {FILE_UT.includes(ut) && ut !== 3 &&
+              {!isFirmUser && FILE_UT.includes(ut) && ut !== 3 &&
                 ([1, 2].includes(ut)
                   ? link('/file-complaint', fileComplaintLabel, 'plus-square')
                   : navGroup(
@@ -291,9 +294,9 @@ export default function Layout() {
                         </>
                       ))}
 
-              {MY_COMPLAINTS_UT.includes(ut) && ut !== 3 && link('/my-complaints', 'My Complaints', 'person-lines-fill')}
+              {MY_COMPLAINTS_UT.includes(ut) && ut !== 3 && link('/my-complaints', isFirmUser ? 'My Cases' : 'My Complaints', 'person-lines-fill')}
 
-              {MEMBER_REPORTS_UT.includes(ut) && (
+              {!isFirmUser && MEMBER_REPORTS_UT.includes(ut) && (
                 <>
                   <div className="admin-nav-section">Member Reports</div>
                   {link('/reports/member-complaint-status', 'My Complaint Status', 'bar-chart-line')}

@@ -1739,17 +1739,25 @@ export default function ComplaintDetail() {
       if (c.ScrutinySheet) {
         try {
           const parsed = JSON.parse(c.ScrutinySheet);
-          setScSheet({ ...parsed, entity: parsed.entity || c.EntityMisconduct || '' });
+          const entityVal = parsed.entity || c.EntityMisconduct || '';
+          const hasEntity = parsed.hasEntity !== undefined ? String(parsed.hasEntity) : (entityVal ? '1' : '0');
+          setScSheet({ ...parsed, hasEntity, entity: hasEntity === '1' ? entityVal : '' });
         } catch {
-          setScSheet({ entity: c.EntityMisconduct || '' });
+          const entityVal = c.EntityMisconduct || '';
+          setScSheet({ entity: entityVal, hasEntity: entityVal ? '1' : '0' });
         }
       } else {
         // Nothing saved yet - pull the auto-filled sheet so every factual cell
         // is already populated before the Scrutiny Officer starts.
-        setScSheet({ entity: c.EntityMisconduct || '' });
+        const entityVal = c.EntityMisconduct || '';
+        setScSheet({ entity: entityVal, hasEntity: entityVal ? '1' : '0' });
         api
           .get(`/complaints/${id}/scrutiny/prefill`)
-          .then((res) => setScSheet((prev) => ({ ...(res.data || {}), entity: prev.entity || c.EntityMisconduct || '' })))
+          .then((res) => setScSheet((prev) => ({
+            ...(res.data || {}),
+            hasEntity: prev.hasEntity,
+            entity: prev.hasEntity === '1' ? (prev.entity || entityVal) : '',
+          })))
           .catch(() => {});
       }
     }
@@ -1814,7 +1822,7 @@ export default function ComplaintDetail() {
   const scSheetSaved = !!(c?.ScrutinySheet && c.ScrutinySheet.trim());
 
   const saveScrutinySheet = async () => {
-    if (!String(scSheet?.entity || '').trim()) {
+    if (scSheet?.hasEntity === '1' && !String(scSheet?.entity || '').trim()) {
       popup.warning('Please enter Entity in respect of which misconduct alleged.');
       return;
     }
@@ -1829,13 +1837,13 @@ export default function ComplaintDetail() {
       }
     }
     if (!scSheet || !Object.keys(scSheet).some((k) => String(scSheet[k] || '').trim() !== '')) {
-      popup.warning('Please fill the Scrutiny Sheet before submitting.');
+      popup.warning('Please fill the Entity & Audio/Video details before submitting.');
       return;
     }
     setScBusy(true);
     try {
       await api.put(`/complaints/${id}/scrutiny`, {
-        entityMisconduct: String(scSheet.entity || '').trim(),
+        entityMisconduct: scSheet.hasEntity === '1' ? String(scSheet.entity || '').trim() : '',
         natureOfAllegation: soNatureOption,
         natureDetails: soNatureOther.trim(),
         isAudioVideo: scSheet.isAudioVideo === '1' ? '1' : '0',
@@ -1843,11 +1851,11 @@ export default function ComplaintDetail() {
         digitalEvidenceCert: String(scSheet.digitalEvidenceCert || '').trim(),
         scrutinySheet: scSheet,
       });
-      popup.success('Scrutiny Sheet submitted successfully');
+      popup.success('Details submitted successfully');
       setSheetOpen(false);
       reload();
     } catch (ex) {
-      popup.error(ex?.response?.data?.error || 'Failed to save Scrutiny Sheet. Please try again.');
+      popup.error(ex?.response?.data?.error || 'Failed to save details. Please try again.');
     } finally {
       setScBusy(false);
     }
@@ -2039,7 +2047,7 @@ export default function ComplaintDetail() {
         return;
       }
       await api.put(`/complaints/${id}/scrutiny`, {
-        entityMisconduct: String(scSheet?.entity || '').trim(),
+        entityMisconduct: scSheet?.hasEntity === '1' ? String(scSheet?.entity || '').trim() : '',
         natureOfAllegation: soNatureOption,
         natureDetails: soNatureOther.trim(),
       });
@@ -2606,6 +2614,7 @@ export default function ComplaintDetail() {
               <i className="bi bi-download me-1" />Download Form
             </button>
           )}
+          {/* Scrutiny Sheet download is temporarily disabled (comment mode).
           {viewerIsInternal && (
             <button
               type="button"
@@ -2616,12 +2625,13 @@ export default function ComplaintDetail() {
               <i className="bi bi-file-earmark-arrow-down me-1" />Download Scrutiny Sheet
             </button>
           )}
+          */}
           {viewerIsInternal && (
             <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => downloadPdf('compilation')}>
               <i className="bi bi-download me-1" />Download Compilation
             </button>
           )}
-          {[2, 3].includes(Number(user?.UserType)) && (
+          {[2, 3].includes(Number(user?.UserType)) && Number(user?.IsFirmUser) !== 1 && (
             <button
               type="button"
               className="btn btn-primary btn-sm"
@@ -2941,6 +2951,7 @@ export default function ComplaintDetail() {
         </div>
       )}
 
+      {/* Scrutiny Sheet functionality is temporarily disabled (comment mode).
       {ut === 5 && [2, 4].includes(Number(c.StatusID)) && (
         <div className="card ds-card mb-4">
           <div className="card-header">
@@ -2981,6 +2992,34 @@ export default function ComplaintDetail() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      */}
+
+      {ut === 5 && [2, 4].includes(Number(c.StatusID)) && (
+        <div className="card ds-card mb-4">
+          <div className="card-header">
+            <div className="card-title">
+              <i className="bi bi-clipboard-check" />
+              Entity &amp; Audio/Video Details
+            </div>
+          </div>
+          <div className="card-body">
+            {scSheetSaved && (
+              <div className="alert alert-success py-2 small mb-3">
+                <i className="bi bi-check-circle me-1" />Details submitted. You can update them below.
+              </div>
+            )}
+            <ScrutinySheetForm
+              entityAudioOnly
+              value={scSheet}
+              onChange={setScSheet}
+              complaintNo={c.CompNo}
+              onSave={saveScrutinySheet}
+              saved={scSheetSaved}
+              busy={scBusy}
+            />
           </div>
         </div>
       )}
@@ -3372,7 +3411,7 @@ export default function ComplaintDetail() {
           {ut === 5 && !scSheetSaved && [2, 4].includes(Number(c.StatusID)) && (
             <div className="alert alert-warning py-2 small">
               <i className="bi bi-clipboard-plus me-1" />
-              Please submit the Scrutiny Sheet first, then you can take further action on this complaint.
+              Please submit the Entity &amp; Audio/Video details first, then you can take further action on this complaint.
             </div>
           )}
 

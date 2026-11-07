@@ -194,6 +194,14 @@ export default function FileComplaint() {
   // Form I (the legacy ?type=A link). Only the DD "Suo Moto" flow keeps Form A.
   const formType = isDD ? 'A' : 'I';
 
+  // Firm accounts only manage answerable members / case assignment; they must
+  // not file new complaints. Editing an existing complaint remains allowed.
+  useEffect(() => {
+    if (Number(user?.IsFirmUser) === 1 && !isEdit) {
+      navigate('/my-complaints', { replace: true });
+    }
+  }, [user?.IsFirmUser, isEdit, navigate]);
+
   const [form, setForm] = useState(() => ({
     ...emptyForm,
     formType,
@@ -508,10 +516,6 @@ export default function FileComplaint() {
           memCommRegion: m.MemCommRegion || '',
           firmNo: m.FirmNo || '',
         })));
-        setAudioFiles((d.audioVideo || []).map((a) => ({
-          attachment: a.Attachment || '',
-          fileName: a.Attachment || '',
-        })));
         const scheds = (d.schedules || []).map((s) => ({
           schedule: s.Schedule != null ? String(s.Schedule) : '',
           partNo: s.PartNo != null ? String(s.PartNo) : '',
@@ -587,6 +591,15 @@ export default function FileComplaint() {
     if (form.taxableAmount === '0' && form.taxRate === '0') return;
     setForm((prev) => ({ ...prev, taxableAmount: '0', taxRate: '0' }));
   }, [compTypes, form.compTypeId, form.taxableAmount, form.taxRate]);
+
+  useEffect(() => {
+    if (!form.compTypeId) { setRegulators([]); return; }
+    const label = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
+    if (!GOV_COMP_TYPE_LABELS.includes(label)) { setRegulators([]); return; }
+    api.get(`/masters/33?option1=${form.compTypeId}`)
+      .then((r) => setRegulators(r.data))
+      .catch(() => setRegulators([]));
+  }, [compTypes, form.compTypeId]);
 
   const onScheduleChange = async (e) => {
     const v = e.target.value;
@@ -820,9 +833,10 @@ export default function FileComplaint() {
   const validate = () => {
     if (!form.compTypeId) return 'Please select Type of Complaint';
     const ctLabel = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
-    if (GOV_COMP_TYPE_LABELS.includes(ctLabel)) {
-      if (!form.regulatorName) return 'Please enter Regulator Name';
-    }
+    // Regulator details are not required for now.
+    // if (GOV_COMP_TYPE_LABELS.includes(ctLabel)) {
+    //   if (!form.regulatorName) return 'Please enter Regulator Name';
+    // }
     if (!form.name) return 'Please enter Name';
     if (!isValidName(form.name)) return 'Please enter a valid Name (letters, spaces, dots, hyphens only)';
     if (!form.email) return 'Please enter Email ID';
@@ -1034,6 +1048,40 @@ export default function FileComplaint() {
                 {compTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
+            {/* Regulator details are not required for now.
+            {isGovType && (
+              <>
+                <div className="col-md-4">
+                  <label className="form-label">Regulator</label>
+                  <select
+                    className="form-select"
+                    value={form.regulatorId || ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const label = regulators.find((r) => String(r.value) === String(v))?.label || '';
+                      setForm((prev) => ({ ...prev, regulatorId: v, regulatorName: prev.regulatorName || label }));
+                    }}
+                  >
+                    <option value="">--Select--</option>
+                    {regulators.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  </select>
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label">Name of Regulator *</label>
+                  <input className="form-control" value={form.regulatorName} onChange={set('regulatorName')} />
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label">Designation</label>
+                  <input className="form-control" value={form.regulatorDesignation} onChange={set('regulatorDesignation')} />
+                </div>
+                <div className="col-md-4">
+                  <FileUploadInput label="Authorization Letter" hint={`${PDF_HINT}`}
+                    accept=".pdf" sizeMB={10}
+                    current={form.regulatorAttachment} onUpload={(path) => setForm({ ...form, regulatorAttachment: path })} />
+                </div>
+              </>
+            )}
+            */}
             <div className="col-md-4">
               <label className="form-label">Name *</label>
               <input className="form-control" value={form.name} onChange={set('name')} readOnly={!isDD} />
@@ -1303,11 +1351,19 @@ export default function FileComplaint() {
               <FileUploadInput label="Brief Fact Statement (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
                 accept=".pdf" sizeMB={10} required
                 current={form.briefAttachment} onUpload={(path) => setForm({ ...form, briefAttachment: path })} />
+              <label className="form-label mt-3">Brief Fact Statement (Remark)</label>
+              <textarea className="form-control" rows={3} value={form.briefStatement}
+                onChange={(e) => setForm({ ...form, briefStatement: e.target.value })}
+                placeholder="Enter remark for Brief Fact Statement" />
             </div>
             <div className="col-12">
               <FileUploadInput label="Particular of Misconduct (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
                 accept=".pdf" sizeMB={10} required
                 current={form.misconductAttachment} onUpload={(path) => setForm({ ...form, misconductAttachment: path })} />
+              <label className="form-label mt-3">Particular of Misconduct (Remark)</label>
+              <textarea className="form-control" rows={3} value={form.particularMisconduct}
+                onChange={(e) => setForm({ ...form, particularMisconduct: e.target.value })}
+                placeholder="Enter remark for Particular of Misconduct" />
             </div>
           </div>
         </div>

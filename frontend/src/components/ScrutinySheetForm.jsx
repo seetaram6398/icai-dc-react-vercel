@@ -72,6 +72,7 @@ const TEXT_FIELDS = [
 const EMPTY = () => {
   const d = {
     cno: '',
+    hasEntity: '0',
     entity: '',
     isAudioVideo: '0',
     audioVideo: [],
@@ -110,7 +111,7 @@ function Seg({ name, value, opts, onChange }) {
   );
 }
 
-function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, message, onClear, onDownload }) {
+function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, message, onClear, onDownload, entityAudioOnly = false }) {
   const [printWin, setPrintWin] = useState(null);
   const popup = usePopups();
   const d = value || EMPTY();
@@ -172,6 +173,142 @@ function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, 
       ...(v === '0' ? { audioVideo: [], digitalEvidenceCert: '' } : {}),
     });
   };
+
+  const entityAudioCards = (
+    <>
+      <div className="card mb-3">
+        <div className="card-header bg-warning text-dark fw-semibold">
+          <i className="bi bi-building me-2" />Entity in respect of which misconduct alleged
+        </div>
+        <div className="card-body">
+          <div className="mb-3" style={{ maxWidth: 400 }}>
+            <label className="form-label small fw-semibold">
+              Whether Entity in respect of which misconduct alleged is applicable?
+            </label>
+            <select
+              className="form-select"
+              value={d.hasEntity || '0'}
+              onChange={(e) => {
+                const v = e.target.value;
+                onChange({ ...d, hasEntity: v, ...(v === '0' ? { entity: '' } : {}) });
+              }}
+            >
+              <option value="0">No</option>
+              <option value="1">Yes</option>
+            </select>
+          </div>
+          {d.hasEntity === '1' && (
+            <>
+              <label className="form-label small fw-semibold">
+                Entity in respect of which misconduct alleged <span className="text-danger">*</span>
+              </label>
+              <input
+                className="form-control"
+                value={d.entity || ''}
+                onChange={(e) => set('entity')(e.target.value)}
+                placeholder="Entity in respect of which misconduct alleged."
+              />
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="card mb-3">
+        <div className="card-header bg-primary text-white fw-semibold">
+          <i className="bi bi-camera-video me-2" />Audio/Video Attachment
+        </div>
+        <div className="card-body">
+          <div className="row g-3">
+            <div className="col-md-4">
+              <label className="form-label small fw-semibold">Do you have Audio/Video Evidence?</label>
+              <select
+                className="form-select"
+                value={d.isAudioVideo || '0'}
+                onChange={(e) => onAudioVideoChange(e.target.value)}
+              >
+                <option value="0">No</option>
+                <option value="1">Yes</option>
+              </select>
+            </div>
+            {d.isAudioVideo === '1' && (
+              <>
+                <div className="col-md-4">
+                  <label className="form-label small fw-semibold">Upload Audio/Video *</label>
+                  <input
+                    type="file"
+                    className="form-control form-control-sm"
+                    accept=".mp3,.wav,.mp4,.wmv,.avi"
+                    onChange={onAudioUpload}
+                  />
+                  <div className="form-text">MP3, WAV, MP4, WMV, AVI — max 15 MB</div>
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label small fw-semibold">Upload Digital Evidence Certificate *</label>
+                  <input
+                    type="file"
+                    className="form-control form-control-sm"
+                    accept=".pdf"
+                    onChange={onCertUpload}
+                  />
+                  <div className="form-text">PDF — max 10 MB</div>
+                  {d.digitalEvidenceCert && (
+                    <div className="small mt-1">
+                      {String(d.digitalEvidenceCert).split(/[\\/]/).pop()}
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm text-danger p-0 ms-2"
+                        onClick={() => set('digitalEvidenceCert')('')}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+          {(d.audioVideo || []).length > 0 && (
+            <table className="table table-sm table-bordered mt-3 mb-0">
+              <thead><tr><th>Audio/Video File</th><th>Action</th></tr></thead>
+              <tbody>
+                {(d.audioVideo || []).map((a, i) => (
+                  <tr key={i}>
+                    <td>{a.fileName || String(a.attachment || '').split(/[\\/]/).pop()}</td>
+                    <td>
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => removeAudio(i)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </>
+  );
+
+  if (entityAudioOnly) {
+    return (
+      <div>
+        <div className="sc-wrap">
+          <div className="mb-3" style={{ maxWidth: 400 }}>
+            <label className="form-label small fw-semibold">Complaint No.</label>
+            <input className="form-control" value={d.cno || complaintNo || ''} readOnly />
+          </div>
+          {entityAudioCards}
+          {message && (
+            <div className={`alert ${String(message).includes('success') ? 'alert-success' : 'alert-danger'} py-2 small`}>{message}</div>
+          )}
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={onSave}>
+            {busy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}
+            <i className="bi bi-check2-circle me-1" />{saved ? 'Update Details' : 'Submit Details'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const doPrint = () => {
     if (!printWin || printWin.closed) {
@@ -308,96 +445,7 @@ function ScrutinySheetForm({ value, onChange, complaintNo, onSave, saved, busy, 
           <input className="form-control" value={d.cno || complaintNo || ''} readOnly />
         </div>
 
-        <div className="card mb-3">
-          <div className="card-header bg-warning text-dark fw-semibold">
-            <i className="bi bi-building me-2" />Entity in respect of which misconduct alleged
-          </div>
-          <div className="card-body">
-            <label className="form-label small fw-semibold">
-              Entity in respect of which misconduct alleged <span className="text-danger">*</span>
-            </label>
-            <input
-              className="form-control"
-              value={d.entity || ''}
-              onChange={(e) => set('entity')(e.target.value)}
-              placeholder="Entity in respect of which misconduct alleged."
-            />
-          </div>
-        </div>
-
-        <div className="card mb-3">
-          <div className="card-header bg-primary text-white fw-semibold">
-            <i className="bi bi-camera-video me-2" />Audio/Video Attachment
-          </div>
-          <div className="card-body">
-            <div className="row g-3">
-              <div className="col-md-4">
-                <label className="form-label small fw-semibold">Do you have Audio/Video Evidence?</label>
-                <select
-                  className="form-select"
-                  value={d.isAudioVideo || '0'}
-                  onChange={(e) => onAudioVideoChange(e.target.value)}
-                >
-                  <option value="0">No</option>
-                  <option value="1">Yes</option>
-                </select>
-              </div>
-              {d.isAudioVideo === '1' && (
-                <>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-semibold">Upload Audio/Video *</label>
-                    <input
-                      type="file"
-                      className="form-control form-control-sm"
-                      accept=".mp3,.wav,.mp4,.wmv,.avi"
-                      onChange={onAudioUpload}
-                    />
-                    <div className="form-text">MP3, WAV, MP4, WMV, AVI — max 15 MB</div>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-semibold">Upload Digital Evidence Certificate *</label>
-                    <input
-                      type="file"
-                      className="form-control form-control-sm"
-                      accept=".pdf"
-                      onChange={onCertUpload}
-                    />
-                    <div className="form-text">PDF — max 10 MB</div>
-                    {d.digitalEvidenceCert && (
-                      <div className="small mt-1">
-                        {String(d.digitalEvidenceCert).split(/[\\/]/).pop()}
-                        <button
-                          type="button"
-                          className="btn btn-link btn-sm text-danger p-0 ms-2"
-                          onClick={() => set('digitalEvidenceCert')('')}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-            {(d.audioVideo || []).length > 0 && (
-              <table className="table table-sm table-bordered mt-3 mb-0">
-                <thead><tr><th>Audio/Video File</th><th>Action</th></tr></thead>
-                <tbody>
-                  {(d.audioVideo || []).map((a, i) => (
-                    <tr key={i}>
-                      <td>{a.fileName || String(a.attachment || '').split(/[\\/]/).pop()}</td>
-                      <td>
-                        <button type="button" className="btn btn-danger btn-sm" onClick={() => removeAudio(i)}>
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
+        {entityAudioCards}
 
         <div className="table-responsive mb-3" style={{ border: '1px solid #c7dcef', borderRadius: 10 }}>
           <table className="table table-bordered table-sm align-middle mb-0 sc-table">

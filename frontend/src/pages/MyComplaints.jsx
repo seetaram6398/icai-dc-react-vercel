@@ -12,10 +12,12 @@ function MyComplaints() {
   const [loading, setLoading] = useState(true);
   const [statusIds, setStatusIds] = useState(searchParams.get('statusIds') || '');
   const ut = Number(user?.UserType);
+  const isFirmUser = Number(user?.IsFirmUser) === 1;
   const isRespondent = ut === 2;
   // Parties can file complaints; respondents additionally see the cases where
-  // they are the named respondent or an answerable member.
-  const canFileComplaint = [1, 2, 3, 4].includes(ut);
+  // they are the named respondent or an answerable member. Firm accounts only
+  // manage answerable members, so they cannot file complaints.
+  const canFileComplaint = !isFirmUser && [1, 2, 3, 4].includes(ut);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -34,9 +36,11 @@ function MyComplaints() {
         <div>
           <h4 className="mb-0">{isRespondent ? 'My Cases' : 'My Complaints'}</h4>
           <small className="text-muted">
-            {isRespondent
-              ? 'Complaints filed by you or where you are the respondent / answerable member'
-              : 'Complaints filed by you'}
+            {isFirmUser
+              ? 'Complaints filed against your firm'
+              : isRespondent
+                ? 'Complaints filed by you or where you are the respondent / answerable member'
+                : 'Complaints filed by you'}
           </small>
         </div>
         {canFileComplaint && (
@@ -67,7 +71,10 @@ function MyComplaints() {
                 {rows.map((c) => (
                   <tr key={c.CompID} className="clickable" onClick={() => navigate(`/complaints/${c.CompID}`)}>
                     <td className="fw-semibold">{c.CompNo}</td>
-                    <td>{c.ResName} {c.IsFirm ? `(${c.FirmNo})` : ''}</td>
+                    <td>
+                      {c.IsFirm ? (c.NameofFirm || c.ResName) : c.ResName}
+                      {c.IsFirm && (c.FirmNo || c.ResRegistrationNo) ? ` (${c.FirmNo || c.ResRegistrationNo})` : ''}
+                    </td>
                     <td>{c.CompTypeName || '-'}</td>
                     <td><span className="badge text-bg-primary">{statusText(c.StatusName)}</span></td>
                     <td>{c.EntryDate ? new Date(c.EntryDate).toLocaleDateString() : '-'}</td>

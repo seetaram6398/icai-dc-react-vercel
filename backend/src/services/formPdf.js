@@ -97,7 +97,6 @@ async function buildComplaintPdf(id, opts) {
     { id }
   );
   const docs = await query('SELECT CompAttachID, DocumentID, DocURL FROM tbl_ComplaintDocument WHERE CompID=@id', { id });
-  const av = await query('SELECT AttachID, Attachment FROM tbl_AudioVideoAttachment WHERE ComplaintID=@id', { id });
   let history = [];
   if (includeHistory) {
     history = await query(
@@ -113,7 +112,6 @@ async function buildComplaintPdf(id, opts) {
 
   const paths = [];
   docs.forEach((r) => paths.push(r.DocURL));
-  av.forEach((r) => paths.push(r.Attachment));
   [c.BriefAttachment, c.MisconductAttachment, c.RegulatorAttachment, c.InvestigatingReport,
     c.AadharPhoto, c.ComplaintantPhoto, c.ComplaintantSignature].forEach((p) => { if (p) paths.push(p); });
   const files = [...new Set(paths.filter(Boolean).map((p) => p.replace(/\\/g, '/')))];
@@ -479,12 +477,7 @@ async function buildComplaintPdf(id, opts) {
       personCols,
     ]},
 
-    // 9. Entity
-    { cells: [
-      tcell(COLS[0], '9.'),
-      tcell(COLS[1], 'Entity in respect of which misconduct alleged'),
-      tcell(COLS[2], detail(c.EntityMisconduct)),
-    ]},
+    // 9. Entity (moved to the SO-level Entity & Audio/Video details)
 
     // Date / Time / Place / Signature
     { cells: [tcell(COLS[0], ''), tcell(COLS[1], 'Date:'), tcell(COLS[2], fmtD(c.VerificationDate || c.EntryDate) || '—')] },

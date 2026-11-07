@@ -36,7 +36,7 @@ function ComplaintList() {
   const ut = Number(user?.UserType);
   const aspxView = ut === 3;
   const isParty = ut === 2 || ut === 3;
-  const canFileComplaint = [1, 2, 3].includes(ut);
+  const canFileComplaint = [1, 2, 3].includes(ut) && Number(user?.IsFirmUser) !== 1;
   const fileComplaintLabel = ut === 1 ? 'File New Complaint' : 'Add New Complaint';
   // Rule 5(4) - the staff (Admin / DD / SO) also see the clubbing and closure
   // relationships in the complaint list; the parties only ever see complaint

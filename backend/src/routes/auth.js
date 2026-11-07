@@ -271,7 +271,23 @@ router.get('/me', authMiddleware, async (req, res) => {
     const rows = await query('SELECT * FROM tbl_Users WHERE UserID=@id', { id: req.user.UserID });
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = rows[0];
-    res.json({ user: { ...user, OTP: undefined } });
+
+    // Firm login: a party account whose email is the respondent email of a
+    // complaint filed against a firm (IsFirm=1). Such accounts only manage
+    // answerable members / case assignment and must not see member menus.
+    let isFirmUser = 0;
+    const email = String(user.Email || req.user.Email || '').trim();
+    if (email) {
+      const firmRows = await query(
+        `SELECT TOP 1 1 AS v FROM tbl_NewComplaint
+         WHERE IsFirm=1 AND LOWER(LTRIM(RTRIM(ResEmailID)))=@email
+           AND (IsTemp IS NULL OR IsTemp = 0)`,
+        { email: email.toLowerCase() }
+      );
+      isFirmUser = firmRows.length ? 1 : 0;
+    }
+
+    res.json({ user: { ...user, OTP: undefined, IsFirmUser: isFirmUser } });
   } catch (e) {
     res.status(500).json({ error: 'Server error' });
   }
