@@ -18,6 +18,7 @@ const UPLOAD_DIRS = {
   stay: 'StayAttach',
   soaction: 'SOAction',
   respondent: 'RespondentReply',
+  defect: 'DefectResponse',
   withdrawal: 'Withdrawal',
   workflow: 'Workflow',
 };

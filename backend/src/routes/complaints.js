@@ -25,6 +25,7 @@ const {
   AD_PARTIES,
 } = require('../services/complaintAccess');
 const { findPartyActionPendingIds } = require('../services/partyActions');
+const { getDefects, findDefect, buildDefectCommunication } = require('../services/defectCatalog');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -59,6 +60,49 @@ async function getComplaintAccess(req, id) {
     return { allowed: true, viewerRole, viewerIsInternal, directComplainant, complaint: c };
   } catch (e) {
     return { allowed: false, reason: 'Server error' };
+  }
+}
+
+function normalizeCustomDefects(customDefects) {
+  return (Array.isArray(customDefects) ? customDefects : [])
+    .map((defect) => {
+      const label = String(defect?.question || defect?.label || '').trim().slice(0, 500);
+      const relevantColumn = String(defect?.relevantColumn || defect?.column || '').trim().slice(0, 200);
+      const customCommunication = String(defect?.communication || '').trim();
+      const communication =
+        customCommunication ||
+        `The following defect has been observed: ${label} You are requested to rectify the said defect and resubmit the complaint.`;
+      return {
+        code: 'OTHER',
+        label,
+        relevantColumn,
+        communication,
+      };
+    })
+    .filter((defect) => defect.label);
+}
+
+async function saveComplaintDefects({ compId, compStatusId, defects, userId }) {
+  if (!compStatusId) throw new Error('Defect status entry was not created');
+  await executeNonQuery(
+    'DELETE FROM tbl_ComplaintDefect WHERE CompID=@compId AND CompStatusID=@compStatusId',
+    { compId, compStatusId }
+  );
+  for (const defect of defects) {
+    await executeNonQuery(
+      `INSERT INTO tbl_ComplaintDefect
+         (CompID, CompStatusID, DefectCode, DefectText, RelevantColumn, Communication, CreatedBy)
+       VALUES (@compId, @compStatusId, @code, @text, @relevantColumn, @communication, @userId)`,
+      {
+        compId,
+        compStatusId,
+        code: defect.code,
+        text: defect.label,
+        relevantColumn: defect.relevantColumn || null,
+        communication: defect.communication || null,
+        userId,
+      }
+    );
   }
 }
 
@@ -1051,6 +1095,13 @@ router.get('/lookup', async (req, res) => {
   }
 });
 
+// Approved Rule 5(5) defect catalogue. This is used by the SO's defect
+// rectification action; the selected communication is copied into the status
+// remarks and each defect is stored separately on the complaint.
+router.get('/defect-catalog', (req, res) => {
+  res.json({ defects: getDefects() });
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const id = req.params.id;
@@ -1093,6 +1144,23 @@ router.get('/:id', async (req, res) => {
     }
 
     const documents = await query('SELECT * FROM tbl_ComplaintDocument WHERE CompID=@id', { id });
+    let defects = [];
+    try {
+      const lastDefectStatus = await query(
+        `SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus
+         WHERE CompaintID=@id AND StatusID=3 ORDER BY CompStatusID DESC`,
+        { id }
+      );
+      if (lastDefectStatus.length) {
+        defects = await query(
+          `SELECT * FROM tbl_ComplaintDefect
+           WHERE CompID=@id AND CompStatusID=@csid ORDER BY ComplaintDefectID`,
+          { id, csid: Number(lastDefectStatus[0].CompStatusID) }
+        );
+      }
+    } catch (defectErr) {
+      console.error('load complaint defects error:', defectErr.message);
+    }
     const factPersons = await query('SELECT * FROM tbl_FactPersons WHERE CompID=@id', { id });
     const answerable = await query('SELECT * FROM tbl_AnswerableMember WHERE CompID=@id', { id });
     const audioVideo = await query('SELECT * FROM tbl_AudioVideoAttachment WHERE ComplaintID=@id', { id });
@@ -1199,6 +1267,7 @@ router.get('/:id', async (req, res) => {
       // are shown to the internal staff and to the complainant only, never to
       // the respondent or the third party.
       documents: isComplainantViewer ? documents : [],
+      defects: isComplainantViewer ? defects : [],
       factPersons,
       answerable,
       audioVideo: isComplainantViewer ? audioVideo : [],
@@ -2173,6 +2242,31 @@ router.put('/:id', async (req, res) => {
     if (!isAdmin && !wasDraft && ![3, 4].includes(Number(cur.StatusID))) {
       return res.status(400).json({ error: 'Only defect-returned complaints can be edited' });
     }
+    if (!isAdmin && Number(cur.StatusID) === 3) {
+      try {
+        const pendingDefect = await query(
+          `SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus
+           WHERE CompaintID=@id AND StatusID=3 ORDER BY CompStatusID DESC`,
+          { id }
+        );
+        if (pendingDefect.length) {
+          const pending = await query(
+            `SELECT TOP 1 ComplaintDefectID FROM tbl_ComplaintDefect
+             WHERE CompID=@id AND CompStatusID=@csid
+               AND (ResponseRemark IS NULL OR LTRIM(RTRIM(ResponseRemark))='')
+               AND (ResponseAttachment IS NULL OR LTRIM(RTRIM(ResponseAttachment))='')`,
+            { id, csid: Number(pendingDefect[0].CompStatusID) }
+          );
+          if (pending.length) {
+            return res.status(400).json({
+              error: 'Please respond to every defect before resubmitting the complaint.',
+            });
+          }
+        }
+      } catch (defectErr) {
+        console.error('pending defect check error:', defectErr.message);
+      }
+    }
 
     // Resolve respondent region from state (matches POST behaviour)
     let resRegion = b.resRegion || null;
@@ -2659,17 +2753,182 @@ router.put('/:id/scrutiny', async (req, res) => {
 });
 
 /**
+ * POST /api/complaints/:id/defects/respond
+ * The complainant responds to every defect flagged by the SO. Each response can
+ * carry a document and/or a remark. The complaint returns to the SO only after
+ * every defect of the latest defect cycle has been answered.
+ * Body: { responses: [{ complaintDefectId, remark?, attachment? }] }
+ */
+router.post('/:id/defects/respond', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const access = await getComplaintAccess(req, id);
+    if (!access.allowed) return res.status(403).json({ error: access.reason || 'Not allowed' });
+    if (!access.directComplainant) {
+      return res.status(403).json({ error: 'Only the complainant can respond to these defects' });
+    }
+    const compRow = await query('SELECT CompNo FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    const compNo = compRow.length ? compRow[0].CompNo : id;
+
+    const latestRow = await query(
+      'SELECT TOP 1 CompStatusID, StatusID FROM tbl_ComplaintStatus WHERE CompaintID=@id ORDER BY CompStatusID DESC',
+      { id }
+    );
+    if (!latestRow.length || Number(latestRow[0].StatusID) !== 3) {
+      return res.status(400).json({ error: 'This complaint is not awaiting defect rectification' });
+    }
+
+    const lastDefectStatus = await query(
+      `SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus
+       WHERE CompaintID=@id AND StatusID=3 ORDER BY CompStatusID DESC`,
+      { id }
+    );
+    const compStatusId = lastDefectStatus.length ? Number(lastDefectStatus[0].CompStatusID) : null;
+    if (!compStatusId) return res.status(400).json({ error: 'No defect communication found' });
+
+    const defects = await query(
+      `SELECT * FROM tbl_ComplaintDefect
+       WHERE CompID=@id AND CompStatusID=@csid ORDER BY ComplaintDefectID`,
+      { id, csid: compStatusId }
+    );
+    if (!defects.length) return res.status(400).json({ error: 'No defects are pending for this complaint' });
+
+    const bodyResponses = Array.isArray(req.body?.responses) ? req.body.responses : [];
+    const invalidAttachment = bodyResponses.find((response) => {
+      const value = String(response.attachment || '').replace(/\\/g, '/');
+      return value && !/^DefectResponse\//i.test(value);
+    });
+    if (invalidAttachment) {
+      return res.status(400).json({ error: 'The supporting document path is not valid.' });
+    }
+    const byId = new Map(bodyResponses.map((response) => [Number(response.complaintDefectId), response]));
+    const submitted = [];
+
+    for (const defect of defects) {
+      const response = byId.get(Number(defect.ComplaintDefectID)) || {};
+      const remark = String(response.remark || defect.ResponseRemark || '').trim();
+      const attachment = String(response.attachment || defect.ResponseAttachment || '').trim();
+      if (!remark && !attachment) continue;
+      await executeNonQuery(
+        `UPDATE tbl_ComplaintDefect
+         SET ResponseRemark=@remark,
+             ResponseAttachment=@attachment,
+             RespondedBy=@userId,
+             RespondedDate=GETDATE()
+         WHERE ComplaintDefectID=@cdid AND CompID=@id`,
+        {
+          remark: remark || null,
+          attachment: attachment || null,
+          userId: req.user.UserID,
+          cdid: Number(defect.ComplaintDefectID),
+          id,
+        }
+      );
+      if (attachment) {
+        const existingDoc = await query(
+          'SELECT TOP 1 CompAttachID FROM tbl_ComplaintDocument WHERE CompID=@id AND DocURL=@docUrl',
+          { id, docUrl: attachment }
+        );
+        if (!existingDoc.length) {
+          await executeNonQuery(
+            `INSERT INTO tbl_ComplaintDocument (CompID, DocumentID, DocURL, EntryDate)
+             VALUES (@id, @docId, @docUrl, GETDATE())`,
+            {
+              id,
+              docId: `Defect: ${String(defect.DefectText || '').slice(0, 42)}`,
+              docUrl: attachment,
+            }
+          );
+        }
+      }
+      submitted.push({
+        code: defect.DefectCode,
+        defect: defect.DefectText,
+        remark,
+        attachment,
+      });
+    }
+
+    if (submitted.length === 0) {
+      return res.status(400).json({ error: 'Please respond to at least one defect.' });
+    }
+
+    const pendingRows = await query(
+      `SELECT COUNT(*) AS Pending FROM tbl_ComplaintDefect
+       WHERE CompID=@id AND CompStatusID=@csid
+         AND (ResponseRemark IS NULL OR LTRIM(RTRIM(ResponseRemark))='')
+         AND (ResponseAttachment IS NULL OR LTRIM(RTRIM(ResponseAttachment))='')`,
+      { id, csid: compStatusId }
+    );
+    const pending = Number(pendingRows[0]?.Pending || 0);
+    if (pending > 0) {
+      await writeAudit(req, {
+        compId: id,
+        compNo,
+        action: 'DEFECT_RESPONSES_SUBMITTED',
+        entity: 'COMPLAINT_DEFECT',
+        entityId: compStatusId,
+        oldValues: { StatusID: 3 },
+        newValues: { StatusID: 3, Pending: pending, Responses: submitted },
+        details: `Complainant submitted responses for ${submitted.length} defect(s); ${pending} still pending.`,
+      });
+      return res.json({
+        message: 'Defect responses saved. Please respond to the remaining defects.',
+        statusId: 3,
+        allResponded: false,
+        pending,
+      });
+    }
+
+    const soRow = await query(
+      `SELECT TOP 1 UserID FROM tbl_ComplaintStatus
+       WHERE CompaintID=@id AND StatusID=3 ORDER BY CompStatusID DESC`,
+      { id }
+    );
+    const soUserId = soRow.length ? Number(soRow[0].UserID) : null;
+    await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=4 WHERE CompID=@id', { id });
+    await executeNonQuery(
+      `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks)
+       VALUES (@id, 4, @userId, @userToId, GETDATE(), 'Defect rectification submitted by complainant')`,
+      { id, userId: req.user.UserID, userToId: soUserId }
+    );
+
+    await writeAudit(req, {
+      compId: id,
+      compNo,
+      action: 'DEFECT_RECTIFICATION_SUBMITTED',
+      entity: 'COMPLAINT_DEFECT',
+      entityId: compStatusId,
+      oldValues: { StatusID: 3 },
+      newValues: { StatusID: 4, Responses: submitted },
+      details: 'Complainant responded to every defect; complaint returned to the SO for re-scrutiny.',
+    });
+
+    res.json({
+      message: 'All defect responses submitted. The complaint has been returned to the SO.',
+      statusId: 4,
+      allResponded: true,
+      pending: 0,
+    });
+  } catch (e) {
+    console.error('defect response error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
  * POST /api/complaints/:id/status
  * Change a complaint's status (audit trail insert).
  * Mirrors ASPX UpdateStatus() semantics.
- * Body: { statusId, remarks, userToId?, attachment?, commonField?, extensionTime?, decisionValue? }
+ * Body: { statusId, remarks, userToId?, attachment?, commonField?, extensionTime?, decisionValue?, defects? }
  *   - extensionTime: days requested (persisted to tbl_ComplaintStatus.ExtensionTime)
  *   - decisionValue: e.g. "Case Closed - AFRA" -> also logged in tbl_ComplaintSubStatus
+ *   - defects: array of catalogue codes when statusId is 3 (defect rectification)
  */
 router.post('/:id/status', async (req, res) => {
   try {
     const id = req.params.id;
-    const { statusId, remarks, userToId, attachment, commonField, extensionTime, decisionValue, clubbedWithCompId, clubRule } = req.body;
+    const { statusId, remarks, userToId, attachment, commonField, extensionTime, decisionValue, clubbedWithCompId, clubRule, defects, customDefects } = req.body;
     const userId = req.user.UserID;
 
     const beforeRow = await query(
@@ -2743,6 +3002,35 @@ router.post('/:id/status', async (req, res) => {
     }
     const ext = extensionTime != null && extensionTime !== '' ? Number(extensionTime) : null;
 
+    let selectedDefects = [];
+    let finalRemarks = remarks || null;
+    if (Number(statusId) === 3) {
+      const codes = [
+        ...new Set(
+          (Array.isArray(defects) ? defects : [])
+            .map((code) => String(code || '').trim())
+            .filter(Boolean)
+        ),
+      ];
+      const otherDefects = normalizeCustomDefects(customDefects);
+      if (codes.length === 0 && otherDefects.length === 0) {
+        return res.status(400).json({ error: 'Please select at least one defect.' });
+      }
+      if (otherDefects.some((defect) => !defect.relevantColumn)) {
+        return res.status(400).json({
+          error: 'Please specify the relevant column / input for the Other defect.',
+        });
+      }
+      selectedDefects = codes.map((code) => findDefect(code));
+      if (selectedDefects.some((defect) => !defect)) {
+        return res.status(400).json({ error: 'One or more selected defects are not valid.' });
+      }
+      selectedDefects = [...selectedDefects, ...otherDefects];
+      finalRemarks = String(remarks || '').trim()
+        ? remarks
+        : buildDefectCommunication(codes, otherDefects);
+    }
+
     // No duplicate entries for the same status at the same level (mirrors the
     // ASPX UpdateStatus() guard). If the complaint is already parked at the
     // submitted status, only touch the latest entry instead of inserting a new
@@ -2766,13 +3054,21 @@ router.post('/:id/status', async (req, res) => {
          WHERE CompStatusID=@csid`,
         {
           userToId: parkedUserToId,
-          remarks: remarks || null,
+          remarks: finalRemarks,
           attachment: attachment || null,
           commonField: commonField || null,
           extensionTime: ext,
           csid: Number(latestRow[0].CompStatusID),
         }
       );
+      if (Number(statusId) === 3) {
+        await saveComplaintDefects({
+          compId: id,
+          compStatusId: Number(latestRow[0].CompStatusID),
+          defects: selectedDefects,
+          userId,
+        });
+      }
       await writeAudit(req, {
         compId: id,
         compNo,
@@ -2780,7 +3076,12 @@ router.post('/:id/status', async (req, res) => {
         entity: 'COMPLAINT_STATUS',
         entityId: latestRow[0].CompStatusID,
         oldValues: { StatusID: oldStatusId },
-        newValues: { StatusID: effectiveStatusId, UserToID: parkedUserToId, CommonField: commonField || null },
+        newValues: {
+          StatusID: effectiveStatusId,
+          UserToID: parkedUserToId,
+          CommonField: commonField || null,
+          Defects: selectedDefects.map((defect) => defect.code),
+        },
         details: `Status already at ${effectiveStatusId}; latest history row updated.`,
       });
       res.json({
@@ -2818,12 +3119,25 @@ router.post('/:id/status', async (req, res) => {
         s: primaryStatusId,
         userId,
         userToId: primaryUserToId,
-        remarks: remarks || null,
+        remarks: finalRemarks,
         attachment: attachment || autoAttachment,
         commonField: commonField || null,
         extensionTime: ext,
       }
     );
+    if (Number(statusId) === 3) {
+      const statusRow = await query(
+        `SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus
+         WHERE CompaintID=@id AND StatusID=3 ORDER BY CompStatusID DESC`,
+        { id }
+      );
+      await saveComplaintDefects({
+        compId: id,
+        compStatusId: statusRow.length ? Number(statusRow[0].CompStatusID) : null,
+        defects: selectedDefects,
+        userId,
+      });
+    }
     if (isAutoForward) {
       await executeNonQuery(
         `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks, Attachment, CommonField, ExtensionTime)
@@ -3015,9 +3329,10 @@ router.post('/:id/status', async (req, res) => {
         newValues: {
           StatusID: primaryStatusId,
           AssignedTo: primaryUserToId,
-          Remarks: remarks || null,
+          Remarks: finalRemarks,
           Attachment: attachment || autoAttachment,
           CommonField: commonField || null,
+          Defects: selectedDefects.map((defect) => defect.code),
           ClubbedWithCompID: clubbedWithCompId !== undefined ? (clubbedWithCompId || null) : oldClubbedWith,
           ClubRule: clubRule || oldClubRule,
         },

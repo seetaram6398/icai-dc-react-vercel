@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { uploadFile } from '../api/upload';
@@ -46,12 +46,52 @@ function daysSince(v) {
   return Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / 86400000));
 }
 
+const DEFECT_COLUMN_OPTIONS = [
+  'Column 1 of Form I',
+  'Column 1 of Form I and verification part',
+  'Column 2 of Form I',
+  'Column 3 of Form I',
+  'Column 4 of Form I',
+  'Column 5 of Form I',
+  'Column 6 of Form I',
+  'Column 7 of Form I',
+  'verification part',
+  'Signature portion (above & below verification)',
+  'separate window for fee submission, not available on Form I',
+  'Others',
+];
+
 function escapeHtml(value) {
   return String(value == null ? '' : value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function buildDefectCommunicationHtml(codes, catalog, customDefects) {
+  const byCode = new Map((catalog || []).map((defect) => [String(defect.code), defect]));
+  const selected = [
+    ...(codes || []).map((code) => byCode.get(String(code))).filter(Boolean),
+    ...(customDefects || []),
+  ];
+  return selected
+    .map((defect, index) => {
+      const column = String(defect.relevantColumn || '').trim();
+      const communication = String(defect.communication || '').trim() ||
+        (defect.code === 'OTHER'
+          ? `The following defect has been observed: ${defect.label} You are requested to rectify the said defect and resubmit the complaint.`
+          : 'Please submit the required information/document for the above defect.');
+      return [
+        '<p>',
+        `<strong>${index + 1}. ${escapeHtml(defect.label)}</strong>`,
+        column ? `<br/><em>Relevant column: ${escapeHtml(column)}</em>` : '',
+        '<br/>',
+        escapeHtml(communication).replace(/\n/g, '<br/>'),
+        '</p>',
+      ].join('');
+    })
+    .join('');
 }
 
 // Default body of the final communication letter. The "From" block and the
@@ -1216,6 +1256,205 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
   );
 }
 
+function DefectRectificationCard({ compId, c, onRefresh, canEdit }) {
+  const popup = usePopups();
+  const defects = c.defects || [];
+  const [rows, setRows] = useState({});
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const next = {};
+    defects.forEach((defect) => {
+      next[defect.ComplaintDefectID] = {
+        remark: defect.ResponseRemark || '',
+        attachment: defect.ResponseAttachment || '',
+        file: null,
+      };
+    });
+    setRows(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [c.defects]);
+
+  if (!defects.length) return null;
+
+  const respondedCount = defects.filter(
+    (defect) => String(defect.ResponseRemark || '').trim() || defect.ResponseAttachment
+  ).length;
+
+  const updateRow = (defectId, patch) => {
+    setRows((prev) => ({
+      ...prev,
+      [defectId]: { ...(prev[defectId] || {}), ...patch },
+    }));
+  };
+
+  const submitResponses = async (e) => {
+    e.preventDefault();
+    for (const defect of defects) {
+      const row = rows[defect.ComplaintDefectID] || {};
+      if (!String(row.remark || '').trim() && !row.attachment && !row.file) {
+        popup.warning(`Please add a remark or supporting document for: ${defect.DefectText}`);
+        return;
+      }
+      if (row.file && row.file.size > 20 * 1024 * 1024) {
+        popup.warning('Each document should be less than 20 MB.');
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      const responses = [];
+      for (const defect of defects) {
+        const row = rows[defect.ComplaintDefectID] || {};
+        let attachment = row.attachment || '';
+        if (row.file) {
+          const uploaded = await uploadFile(row.file, 'defect');
+          attachment = uploaded.path || uploaded.filename || '';
+        }
+        responses.push({
+          complaintDefectId: defect.ComplaintDefectID,
+          remark: String(row.remark || '').trim(),
+          attachment,
+        });
+      }
+      const res = await api.post(`/complaints/${compId}/defects/respond`, { responses });
+      popup.success(res.data?.message || 'Defect responses submitted.');
+      onRefresh();
+    } catch (ex) {
+      popup.error(ex?.response?.data?.error || 'Could not submit the defect responses.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card ds-card mb-4">
+      <div className="card-header">
+        <div className="card-title">
+          <i className="bi bi-list-check" />
+          Defect Rectification
+        </div>
+        <span className="badge-soft badge-soft-neutral">
+          {respondedCount}/{defects.length} responded
+        </span>
+      </div>
+      <div className="card-body">
+        <p className="small text-muted mb-3">
+          The Scrutiny Officer has returned the complaint for rectification of the following defects.
+          {canEdit
+            ? ' Add a supporting document and/or a remark against every defect and submit. The complaint returns to the SO only after all defects are answered.'
+            : ' The response submitted by the complainant is shown against each defect.'}
+        </p>
+        <form onSubmit={submitResponses}>
+          {defects.map((defect, index) => {
+            const row = rows[defect.ComplaintDefectID] || {};
+            const hasResponse = String(defect.ResponseRemark || '').trim() || defect.ResponseAttachment;
+            return (
+              <div className="border rounded p-3 mb-3" key={defect.ComplaintDefectID}>
+                <div className="d-flex gap-2">
+                  <span className="badge-soft badge-soft-primary align-self-start">{index + 1}</span>
+                  <div className="flex-grow-1">
+                    <div className="fw-semibold">{defect.DefectText}</div>
+                    {defect.RelevantColumn && (
+                      <div className="small text-muted mt-1">
+                        <i className="bi bi-input-cursor-text me-1" />
+                        Form I reference: {defect.RelevantColumn}
+                      </div>
+                    )}
+                    {defect.Communication && (
+                      <details className="mt-1">
+                        <summary className="small text-primary" style={{ cursor: 'pointer' }}>
+                          View communication sent by SO
+                        </summary>
+                        <div className="small text-muted mt-2" style={{ whiteSpace: 'pre-wrap' }}>
+                          {defect.Communication}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                  <span className={`badge-soft ${hasResponse ? 'badge-soft-success' : 'badge-soft-warning'} align-self-start`}>
+                    {hasResponse ? 'Responded' : 'Pending'}
+                  </span>
+                </div>
+
+                {canEdit ? (
+                  <div className="row g-2 mt-2">
+                    <div className="col-12">
+                      <label className="form-label small fw-semibold mb-1">Remark / explanation</label>
+                      <textarea
+                        className="form-control"
+                        rows={3}
+                        value={row.remark || ''}
+                        placeholder="Explain how this defect has been rectified..."
+                        onChange={(e) => updateRow(defect.ComplaintDefectID, { remark: e.target.value })}
+                      />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label small fw-semibold mb-1">Supporting document</label>
+                      <input
+                        type="file"
+                        className="form-control"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        onChange={(e) =>
+                          updateRow(defect.ComplaintDefectID, { file: e.target.files[0] || null })
+                        }
+                      />
+                      {(row.attachment || row.file) && (
+                        <div className="small text-muted mt-1">
+                          {row.file ? row.file.name : (
+                            <a href={`/documents/${row.attachment}`} target="_blank" rel="noreferrer">
+                              View uploaded document
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 small">
+                    {String(defect.ResponseRemark || '').trim() ? (
+                      <div className="mb-1" style={{ whiteSpace: 'pre-wrap' }}>
+                        <span className="text-muted">Complainant remark: </span>
+                        {defect.ResponseRemark}
+                      </div>
+                    ) : null}
+                    {defect.ResponseAttachment ? (
+                      <a href={`/documents/${defect.ResponseAttachment}`} target="_blank" rel="noreferrer" className="doc-chip">
+                        <i className={`bi ${fileIcon(defect.ResponseAttachment)}`} />
+                        <span className="doc-name">Supporting document</span>
+                        <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
+                      </a>
+                    ) : null}
+                    {!hasResponse && (
+                      <span className="text-muted">Awaiting response from the complainant.</span>
+                    )}
+                    {defect.RespondedDate && (
+                      <div className="text-muted mt-1">Responded on {fmtDate(defect.RespondedDate)}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {canEdit && (
+            <>
+              <div className="alert alert-info small py-2">
+                <i className="bi bi-info-circle me-1" />
+                Every defect needs either a remark or a supporting document. Attachments added here are also
+                stored with the complaint documents.
+              </div>
+              <button type="submit" className="btn btn-primary w-100" disabled={busy}>
+                {busy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}
+                <i className="bi bi-send me-1" />Submit Defect Responses
+              </button>
+            </>
+          )}
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function ComplainantRejoinderCard({ compId, c, onRefresh }) {
   const popup = usePopups();
   const [rejFile, setRejFile] = useState(null);
@@ -1643,6 +1882,16 @@ export default function ComplaintDetail() {
   const [soRemarks, setSoRemarks] = useState('');
   const [soFile, setSoFile] = useState(null);
   const [soAction, setSoAction] = useState('');
+  const [soDefectCatalog, setSoDefectCatalog] = useState([]);
+  const [soDefectCodes, setSoDefectCodes] = useState([]);
+  const [soDefectSearch, setSoDefectSearch] = useState('');
+  const [soOtherDefect, setSoOtherDefect] = useState(false);
+  const [soCustomDefect, setSoCustomDefect] = useState({
+    question: '',
+    relevantColumn: '',
+    communication: '',
+  });
+  const soAutoCommunicationRef = useRef('');
   const [soOfficer, setSoOfficer] = useState('');
   const [soBusy, setSoBusy] = useState(false);
   const [soSimilarCandidates, setSoSimilarCandidates] = useState([]);
@@ -1666,6 +1915,7 @@ export default function ComplaintDetail() {
   const [clubbedComplaintsList, setClubbedComplaintsList] = useState([]);
   // Details of a clubbed / closed complaint opened in the "view details" modal.
   const [clubbedModal, setClubbedModal] = useState(null);
+  const [defectPanelOpen, setDefectPanelOpen] = useState(false);
   const [roMembers, setRoMembers] = useState([]);
   const [bodMembers, setBodMembers] = useState([]);
   const [committees, setCommittees] = useState([]);
@@ -1725,6 +1975,10 @@ export default function ComplaintDetail() {
       .get('/masters/14')
       .then((res) => setCommittees(res.data || []))
       .catch(() => {});
+    api
+      .get('/complaints/defect-catalog')
+      .then((res) => setSoDefectCatalog(res.data?.defects || []))
+      .catch(() => setSoDefectCatalog([]));
   }, [id, navigate]);
 
   useEffect(() => {
@@ -1732,6 +1986,16 @@ export default function ComplaintDetail() {
       api.get(`/complaints/${c.CompID}/clubbed-list`).then((res) => setClubbedComplaintsList(res.data || [])).catch(() => setClubbedComplaintsList([]));
     }
   }, [c]);
+
+  useEffect(() => {
+    if (soAction !== 'defect') return;
+    const custom = soOtherDefect && soCustomDefect.question.trim()
+      ? [{ ...soCustomDefect, code: 'OTHER', label: soCustomDefect.question.trim() }]
+      : [];
+    const generated = buildDefectCommunicationHtml(soDefectCodes, soDefectCatalog, custom);
+    setSoRemarks((prev) => (!prev || prev === soAutoCommunicationRef.current ? generated : prev));
+    soAutoCommunicationRef.current = generated;
+  }, [soAction, soDefectCodes, soDefectCatalog, soOtherDefect, soCustomDefect]);
 
   useEffect(() => {
     if (c) {
@@ -1980,6 +2244,29 @@ export default function ComplaintDetail() {
 
    const submitSoAction = async (e) => {
      e.preventDefault();
+     if (!soAction) {
+       popup.warning('Please select one of the option.');
+       return;
+     }
+     const customDefects = soOtherDefect
+       ? [{
+           question: soCustomDefect.question.trim(),
+           relevantColumn: soCustomDefect.relevantColumn.trim(),
+           communication: soCustomDefect.communication.trim(),
+         }]
+       : [];
+     if (soAction === 'defect' && soDefectCodes.length === 0 && customDefects.length === 0) {
+       popup.warning('Please select at least one defect or add an Other defect.');
+       return;
+     }
+     if (soAction === 'defect' && soOtherDefect && !customDefects[0].question) {
+       popup.warning('Please enter the defect question for the Other option.');
+       return;
+     }
+     if (soAction === 'defect' && soOtherDefect && !customDefects[0].relevantColumn) {
+       popup.warning('Please specify the relevant column / input for the Other defect.');
+       return;
+     }
      if (!soRemarks.trim()) {
        popup.warning('Please enter remarks.');
        return;
@@ -1992,20 +2279,12 @@ export default function ComplaintDetail() {
        popup.warning('Please select and mark the previous complaint as similar.');
        return;
      }
-     if (!soAction) {
-       popup.warning('Please select one of the option.');
-       return;
-     }
      if (soAction === 'similar' && soSimilarLinked.length === 0) {
        popup.warning('Please select at least one similar complaint.');
        return;
      }
      if (soAction === 'similar' && !soPrimarySimilar) {
        popup.warning('Please select the previous complaint whose stage this complaint should follow.');
-       return;
-     }
-     if (soAction === 'defect' && !soFile) {
-       popup.warning('Please upload documents.');
        return;
      }
      if (soAction === 'recommendDD' && !soClubbing) {
@@ -2088,6 +2367,8 @@ export default function ComplaintDetail() {
         userToId,
         remarks: soRemarks.trim(),
         attachment,
+        defects: soAction === 'defect' ? soDefectCodes : undefined,
+        customDefects: soAction === 'defect' ? customDefects : undefined,
         commonField: soAction === 'recommendDD' ? soClubbing : undefined,
         clubbedWithCompId,
         clubRule,
@@ -2100,6 +2381,11 @@ export default function ComplaintDetail() {
       setSoRemarks('');
       setSoFile(null);
       setSoAction('');
+      setSoDefectCodes([]);
+      setSoDefectSearch('');
+      setSoOtherDefect(false);
+      setSoCustomDefect({ question: '', relevantColumn: '', communication: '' });
+      soAutoCommunicationRef.current = '';
       setSoOfficer('');
       setSoNatureOption('');
       setSoNatureOther('');
@@ -2443,6 +2729,19 @@ export default function ComplaintDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c, user]);
 
+  useEffect(() => {
+    if (!c) return;
+    const directComplainant = Number(c.UserID) === Number(user?.UserID);
+    const pending = (c.defects || []).some(
+      (defect) => !String(defect.ResponseRemark || '').trim() && !defect.ResponseAttachment
+    );
+    if (directComplainant && Number(c.StatusID) === 3 && pending) {
+      setDefectPanelOpen(true);
+    } else if (!pending || Number(c.StatusID) !== 3) {
+      setDefectPanelOpen(false);
+    }
+  }, [c, user]);
+
   if (loading) {
     return (
       <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '40vh' }}>
@@ -2560,6 +2859,10 @@ export default function ComplaintDetail() {
   const isCommitteeActor = [6, 8].includes(ut);
   const ddActionStatuses = [5, 10, 18, 24, 31, 125, 126, 127, 128, 129, 130];
   const activePanels = WORKFLOW_PANELS.filter((p) => p.roles.includes(ut) && p.statuses.includes(Number(c.StatusID)));
+  const pendingDefectCount = (c.defects || []).filter(
+    (defect) => !String(defect.ResponseRemark || '').trim() && !defect.ResponseAttachment
+  ).length;
+  const hasPendingDefects = pendingDefectCount > 0;
 
   // An "action taken" window is valid only until the current user has actually
   // acted at the current status level. After that it stays hidden until the case
@@ -2664,7 +2967,9 @@ export default function ComplaintDetail() {
           >
             <i className="bi bi-arrow-clockwise" />
           </button>
-          {Number(c.UserID) === Number(user?.UserID) && Number(c.StatusID) === 3 && (
+          {Number(c.UserID) === Number(user?.UserID) &&
+            [3, 4].includes(Number(c.StatusID)) &&
+            !hasPendingDefects && (
             <button
               type="button"
               className="btn btn-primary btn-sm"
@@ -2673,8 +2978,30 @@ export default function ComplaintDetail() {
               <i className="bi bi-pencil me-1" />Edit Complaint
             </button>
           )}
+          {c.defects?.length > 0 && (
+            <button
+              type="button"
+              className={`btn btn-sm ${hasPendingDefects ? 'btn-warning' : 'btn-outline-primary'}`}
+              onClick={() => setDefectPanelOpen(true)}
+            >
+              <i className="bi bi-list-check me-1" />
+              {isComplainant && Number(c.StatusID) === 3 && hasPendingDefects
+                ? `Respond to Defects (${pendingDefectCount})`
+                : 'Defects / Responses'}
+            </button>
+          )}
         </div>
       </div>
+
+      {c.defects?.length > 0 &&
+        !(isComplainant && Number(c.StatusID) === 3 && hasPendingDefects) && (
+        <DefectRectificationCard
+          compId={id}
+          c={c}
+          onRefresh={reload}
+          canEdit={isComplainant && Number(c.StatusID) === 3}
+        />
+      )}
 
       {(c.ClubbedWithCompID || (clubbedComplaintsList && clubbedComplaintsList.length > 0)) && (
         <div className="card ds-card mb-4">
@@ -3631,12 +3958,20 @@ export default function ComplaintDetail() {
                   )}
                   <div className="mb-3">
                     <label className="form-label small fw-semibold">
-                      Remarks <span className="text-danger">*</span>
+                      {soAction === 'defect' ? 'Communication / Remarks' : 'Remarks'}{' '}
+                      <span className="text-danger">*</span>
                     </label>
+                    {soAction === 'defect' && (
+                      <div className="form-text mb-1">
+                        The selected defect communications are filled in automatically. You can edit the text before sending.
+                      </div>
+                    )}
                     <RichEditor value={soRemarks} onChange={setSoRemarks} required />
                   </div>
                   <div className="mb-3">
-                    <label className="form-label small fw-semibold">Attachment (PDF, max 20 MB)</label>
+                    <label className="form-label small fw-semibold">
+                      {soAction === 'defect' ? 'Supporting document (optional, PDF, max 20 MB)' : 'Attachment (PDF, max 20 MB)'}
+                    </label>
                     <input
                       type="file"
                       className="form-control"
@@ -3856,6 +4191,133 @@ export default function ComplaintDetail() {
                                 <span className="radio-card-label">Assign to Officer for Additional Document</span>
                               </label>
                             )} */}
+                       </div>
+                     </div>
+                   )}
+                   {soAction === 'defect' && (
+                     <div className="mb-3 p-3 border rounded bg-light">
+                       <label className="form-label small fw-semibold">
+                         Select defects <span className="text-danger">*</span>
+                       </label>
+                       <input
+                         type="text"
+                         className="form-control form-control-sm mb-2"
+                         placeholder="Search defect..."
+                         value={soDefectSearch}
+                         onChange={(e) => setSoDefectSearch(e.target.value)}
+                       />
+                       {soDefectCatalog.length === 0 ? (
+                         <div className="text-muted small">Loading defects...</div>
+                       ) : (
+                         <div className="border rounded bg-white p-2" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                           {soDefectCatalog
+                             .filter((defect) => {
+                               const q = soDefectSearch.trim().toLowerCase();
+                               if (!q) return true;
+                               return `${defect.code} ${defect.label} ${defect.relevantColumn || ''}`
+                                 .toLowerCase()
+                                 .includes(q);
+                             })
+                             .map((defect) => {
+                               const code = String(defect.code);
+                               const checked = soDefectCodes.includes(code);
+                               return (
+                                 <div className="form-check mb-2" key={code}>
+                                   <input
+                                     className="form-check-input"
+                                     type="checkbox"
+                                     id={`soDefect${code}`}
+                                     checked={checked}
+                                     onChange={() =>
+                                       setSoDefectCodes((prev) =>
+                                         prev.includes(code)
+                                           ? prev.filter((item) => item !== code)
+                                           : [...prev, code]
+                                       )
+                                     }
+                                   />
+                                   <label className="form-check-label small" htmlFor={`soDefect${code}`}>
+                                     <span className="badge-soft badge-soft-neutral me-1">{code}</span>
+                                     {defect.label}
+                                     {defect.relevantColumn && (
+                                       <div className="text-muted mt-1">
+                                         <i className="bi bi-input-cursor-text me-1" />
+                                         Form I reference: {defect.relevantColumn}
+                                       </div>
+                                     )}
+                                   </label>
+                                 </div>
+                               );
+                             })}
+                           <div className="form-check border-top pt-2 mt-1">
+                             <input
+                               className="form-check-input"
+                               type="checkbox"
+                               id="soDefectOther"
+                               checked={soOtherDefect}
+                               onChange={(e) => setSoOtherDefect(e.target.checked)}
+                             />
+                             <label className="form-check-label small fw-semibold" htmlFor="soDefectOther">
+                               <span className="badge-soft badge-soft-warning me-1">Other</span>
+                               Defect not listed above
+                             </label>
+                           </div>
+                         </div>
+                       )}
+                       {soOtherDefect && (
+                         <div className="border rounded bg-white p-3 mt-2">
+                           <div className="mb-2">
+                             <label className="form-label small fw-semibold mb-1">
+                               Defect / question <span className="text-danger">*</span>
+                             </label>
+                             <input
+                               type="text"
+                               className="form-control form-control-sm"
+                               value={soCustomDefect.question}
+                               onChange={(e) =>
+                                 setSoCustomDefect((prev) => ({ ...prev, question: e.target.value }))
+                               }
+                               placeholder="Describe the defect not covered by the list..."
+                             />
+                           </div>
+                           <div className="mb-2">
+                             <label className="form-label small fw-semibold mb-1">
+                               Relevant column / input of Form I <span className="text-danger">*</span>
+                             </label>
+                             <input
+                               type="text"
+                               className="form-control form-control-sm"
+                               list="soDefectColumnOptions"
+                               value={soCustomDefect.relevantColumn}
+                               onChange={(e) =>
+                                 setSoCustomDefect((prev) => ({ ...prev, relevantColumn: e.target.value }))
+                               }
+                               placeholder="Select or type the related column / input..."
+                             />
+                             <datalist id="soDefectColumnOptions">
+                               {DEFECT_COLUMN_OPTIONS.map((option) => (
+                                 <option value={option} key={option} />
+                               ))}
+                             </datalist>
+                           </div>
+                           <div>
+                             <label className="form-label small fw-semibold mb-1">
+                               Communication (optional)
+                             </label>
+                             <textarea
+                               className="form-control form-control-sm"
+                               rows={3}
+                               value={soCustomDefect.communication}
+                               onChange={(e) =>
+                                 setSoCustomDefect((prev) => ({ ...prev, communication: e.target.value }))
+                               }
+                               placeholder="Leave blank to auto-generate the communication..."
+                             />
+                           </div>
+                         </div>
+                       )}
+                       <div className="form-text">
+                         {soDefectCodes.length + (soOtherDefect ? 1 : 0)} selected. The selected communication is added to the editor above.
                        </div>
                      </div>
                    )}
@@ -4597,6 +5059,45 @@ export default function ComplaintDetail() {
             </div>
           </div>
         </>
+      )}
+
+      {defectPanelOpen && c.defects?.length > 0 && (
+        <div
+          className="modal d-block"
+          role="dialog"
+          aria-modal="true"
+          style={{ background: 'rgba(15, 23, 42, 0.55)', zIndex: 1080 }}
+        >
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <i className="bi bi-list-check me-2" />
+                  Defect Rectification
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setDefectPanelOpen(false)}
+                  aria-label="Close"
+                />
+              </div>
+              <div className="modal-body">
+                <DefectRectificationCard
+                  compId={id}
+                  c={c}
+                  onRefresh={reload}
+                  canEdit={isComplainant && Number(c.StatusID) === 3}
+                />
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-light" onClick={() => setDefectPanelOpen(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

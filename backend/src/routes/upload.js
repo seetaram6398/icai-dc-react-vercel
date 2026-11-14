@@ -26,6 +26,7 @@ const UPLOAD_DIRS = {
   stay: 'StayAttach',
   soaction: 'SOAction',
   respondent: 'RespondentReply',
+  defect: 'DefectResponse',
   withdrawal: 'Withdrawal',
   // Workflow attachments - the documents attached by the internal users while
   // the complaint moves through the stages.
