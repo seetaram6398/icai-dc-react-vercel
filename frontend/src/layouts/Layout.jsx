@@ -15,6 +15,7 @@ const ROLE_LABELS = {
   10: 'RO',
   11: 'CAE',
   13: 'Vetting Officer',
+  14: 'Sub SO',
 };
 
 const PAGE_LABELS = {
@@ -50,13 +51,13 @@ const DISPOSAL_STATUSES = {
 };
 
 const FULL_UT = [1, 4];
-const VIEW_UT = [1, 3, 4, 5, 6, 7, 8, 10, 11, 13];
+const VIEW_UT = [1, 3, 4, 5, 6, 7, 8, 10, 11, 13, 14];
 const REPORTS_UT = [1, 4, 5, 6, 7, 8, 10];
 const MGMT_UT = [1, 4]; // Master Data / Board Formation / Agenda Generate are withheld from BOD (legacy Role 6 has none)
 const MY_COMPLAINTS_UT = [1, 2, 3, 4];
 const MEMBER_REPORTS_UT = [1, 2, 4];
-// Parties (UserType 2 / 3) and the internal staff can file complaints.
-const FILE_UT = [1, 2, 3, 4];
+// Parties (UserType 2 / 3), DD and the Sub SO (offline complaints) can file.
+const FILE_UT = [1, 2, 3, 4, 14];
 
 function initials(name = '') {
   return name
@@ -152,7 +153,11 @@ export default function Layout() {
   const pageTitle = Object.keys(PAGE_LABELS)
     .sort((a, b) => b.length - a.length)
     .find((k) => location.pathname === k || location.pathname.startsWith(k + '/'));
-  const fileComplaintLabel = ut === 4 ? 'Suo Moto' : [2, 3].includes(ut) ? 'Add New Complaint' : 'File Complaint';
+  const fileComplaintLabel = ut === 4
+    ? 'Suo Moto'
+    : ut === 14
+      ? 'File Offline Complaint'
+      : [2, 3].includes(ut) ? 'Add New Complaint' : 'File Complaint';
   const currentLabel = pageTitle === '/file-complaint'
     ? fileComplaintLabel
     : pageTitle === '/my-complaints' && isFirmUser
@@ -234,6 +239,16 @@ export default function Layout() {
 
           {ut !== 4 && (
             <>
+              {ut === 14 && !isFirmUser && FILE_UT.includes(ut) &&
+                navGroup(
+                  'fileComplaint',
+                  fileComplaintLabel,
+                  'plus-square',
+                  <>
+                    {fileFormSubLink('I', 'Form I')}
+                  </>
+                )}
+
               {VIEW_UT.includes(ut) &&
                 navGroup(
                   'viewComplaints',
@@ -282,7 +297,7 @@ export default function Layout() {
 
               {FULL_UT.concat(6).includes(ut) && link('/bod-dashboard', 'BOD Dashboard', 'person-badge')}
 
-              {!isFirmUser && FILE_UT.includes(ut) && ut !== 3 &&
+              {!isFirmUser && FILE_UT.includes(ut) && ut !== 3 && ut !== 14 &&
                 ([1, 2].includes(ut)
                   ? link('/file-complaint', fileComplaintLabel, 'plus-square')
                   : navGroup(
@@ -363,7 +378,7 @@ export default function Layout() {
               <span className="user-avatar">{initials(user?.NameOfTheUser)}</span>
               <div className="user-meta">
                 <div className="user-name">{user?.NameOfTheUser}</div>
-                <div className="user-role">{roleLabel}</div>
+                {roleLabel !== user?.NameOfTheUser && <div className="user-role">{roleLabel}</div>}
               </div>
             </div>
             <button type="button" className="topbar-logout" onClick={handleLogout}>

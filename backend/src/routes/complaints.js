@@ -1,6 +1,7 @@
 const express = require('express');
 const { query, executeScalar, executeNonQuery } = require('../config/db');
-const { authMiddleware } = require('../services/auth');
+const { authMiddleware, generateOTP } = require('../services/auth');
+const { sendOTPEmail } = require('../services/mailer');
 const { buildComplaintPdf } = require('../services/formPdf');
 const { buildScrutinyPdf } = require('../services/scrutinyPdf');
 const { buildScrutinyDefaults } = require('../services/scrutinyDefaults');
@@ -27,6 +28,15 @@ const { findPartyActionPendingIds } = require('../services/partyActions');
 
 const router = express.Router();
 router.use(authMiddleware);
+
+// The Sub SO only files offline complaints and views the ones they filed. Once
+// submitted, the regular SO / scrutiny / closure flow owns the complaint.
+router.use((req, res, next) => {
+  if (Number(req.user.UserType) !== 14) return next();
+  const isSubmit = req.method === 'POST' && req.path === '/';
+  if (req.method === 'GET' || req.method === 'HEAD' || isSubmit) return next();
+  return res.status(403).json({ error: 'Sub SO can only submit and view offline complaints' });
+});
 
 async function getComplaintAccess(req, id) {
   try {
@@ -145,6 +155,87 @@ async function resolveFixedDD() {
   return rows.length ? Number(rows[0].UserID) : null;
 }
 
+// Sub SO (UserType 14) files an offline complaint on behalf of a complainant.
+// The complaint is recorded against the complainant's own login so it appears
+// in their "My Complaints", while the Sub SO is kept as the actor in the status
+// history. Create (or reuse) that UserType-3 complainant account here.
+async function ensureComplainantUserForSubSO(party = {}) {
+  const email = String(party.email || '').trim();
+  if (!email) return null;
+  const normalized = email.toLowerCase();
+  const membershipNo = String(party.membershipNo || '').trim().toUpperCase() || null;
+
+  const existing = await query(
+    `SELECT TOP 1 UserID, LoginID, Email, NameOfTheUser, MembershipNo, IsDeactivated, UserType
+     FROM tbl_Users
+     WHERE LOWER(LTRIM(RTRIM(Email)))=@e OR LOWER(LTRIM(RTRIM(LoginID)))=@e
+     ORDER BY CASE WHEN LOWER(LTRIM(RTRIM(Email)))=@e THEN 0 ELSE 1 END, IsVerify DESC, UserID ASC`,
+    { e: normalized }
+  );
+
+  if (existing.length) {
+    const u = existing[0];
+    let repaired = false;
+    if (String(u.Email || '').trim().toLowerCase() !== normalized) {
+      // Keep the email exactly as entered so the OTP login (which matches on the
+      // email string) uses the same value the Sub SO typed.
+      await executeNonQuery('UPDATE tbl_Users SET Email=@email WHERE UserID=@id', {
+        email,
+        id: u.UserID,
+      });
+      repaired = true;
+    }
+    if (membershipNo && String(u.MembershipNo || '').trim().toUpperCase() !== membershipNo) {
+      await executeNonQuery('UPDATE tbl_Users SET MembershipNo=@membershipNo WHERE UserID=@id', {
+        membershipNo,
+        id: u.UserID,
+      });
+      repaired = true;
+    }
+    return { user: u, created: false, repaired };
+  }
+
+  const otp = generateOTP();
+  await executeNonQuery(
+    `INSERT INTO tbl_Users
+       (LoginID, NameOfTheUser, Email, MembershipNo, Mob, CountryCode, Address, Area, Landmark,
+        StateID, CityID, Pincode, STDCode, LandlineNo, Region,
+        UserType, IsVerify, IsDeactivated, OTP)
+     VALUES
+       (@login, @name, @email, @membershipNo, @mobile, @countryCode, @address, @area, @landmark,
+        @stateId, @cityId, @pincode, @stdCode, @landlineNo, @region,
+        3, 1, 0, @otp)`,
+    {
+      // tbl_Users.LoginID is varchar(35); login itself is by email (OTP), so a
+      // longer email is safely shortened here.
+      login: email.length <= 35 ? email : email.slice(0, 35),
+      name: String(party.name || 'Complainant').trim(),
+      email,
+      membershipNo,
+      mobile: party.mobile || null,
+      countryCode: party.countryCode || '91',
+      address: party.address || null,
+      area: party.area || null,
+      landmark: party.landmark || null,
+      stateId: party.stateId || null,
+      cityId: party.cityId || null,
+      pincode: party.pincode || null,
+      stdCode: party.stdCode || null,
+      landlineNo: party.landlineNo || null,
+      region: party.region || null,
+      otp,
+    }
+  );
+
+  const user = (
+    await query(
+      'SELECT TOP 1 UserID, LoginID, Email, NameOfTheUser, MembershipNo, IsDeactivated, UserType FROM tbl_Users WHERE LOWER(LTRIM(RTRIM(Email)))=@e',
+      { e: normalized }
+    )
+  )[0];
+  return { user, created: true, otp };
+}
+
 // Build shared complaint-list SQL mirroring the ASPX filter pages.
 // RO (Reporting Officer) default view matches ViewComplaintReportingOfficer.aspx:
 // complaints at StatusID 49 that are assigned to this RO (status 49/54/57),
@@ -221,6 +312,13 @@ function buildListQuery(filters, user) {
   // other people's complaints.
   if (Number(user.UserType) === 3) {
     conds.push(`t.UserID=@ownUserId`);
+    params.ownUserId = Number(user.UserID);
+  }
+  // Sub SO (UserType 14) only sees the offline complaints they filed, not the
+  // whole internal register. The offline submission row is recorded with their
+  // UserID, so it identifies every case they forwarded to an SO.
+  if (Number(user.UserType) === 14) {
+    conds.push(`t.CompID IN (SELECT CompaintID FROM tbl_ComplaintStatus WHERE UserID=@ownUserId)`);
     params.ownUserId = Number(user.UserID);
   }
   if (assignedTo) {
@@ -479,7 +577,8 @@ async function buildDownloadDoc(id, kind, origin) {
     const p = rel(v);
     return p.trim() ? `${docRoot}/${encodeURI(p)}` : '';
   };
-  const docAnchor = (v) => (docHref(v) ? `<a class="doc-link" href="${docHref(v)}" target="_blank">View Document</a>` : '');
+  const docAnchor = (v, label) => (docHref(v) ? `<a class="doc-link" href="${docHref(v)}" target="_blank">${h(label || 'View Document')}</a>` : '');
+  const docLink = (v, label) => (docHref(v) ? `<a class="doc-link" href="${docHref(v)}" target="_blank">${h(label || rel(v).split('/').pop())}</a>` : '');
   const fileLink = (v) => (docHref(v) ? `<a class="doc-link" href="${docHref(v)}" target="_blank">${h(rel(v).split('/').pop())}</a>` : '');
   const fmtD = (v) => (v ? new Date(v).toLocaleDateString('en-GB') : '—');
   const val = (v) => (v == null || String(v).trim() === '' ? '&nbsp;' : h(v));
@@ -517,7 +616,7 @@ async function buildDownloadDoc(id, kind, origin) {
     (isIndividual
       ? fr([fc('S/D/O', val(c.Salutation)), fc('Relation Name', val(c.RelationName)), fc('', '')])
       : fr([fc('Regulator', val(c.RegulatorNameMaster)), fc('Name of Regulator', val(c.RegulatorName)), fc('Designation', val(c.RegulatorDesignation))]) +
-        fr([fc('Authorization Letter', docAnchor(c.RegulatorAttachment), 3)])) +
+        fr([fc('Authorization Letter', docAnchor(c.RegulatorAttachment, 'View Authorization Letter'), 3)])) +
     fr([fc('Membership No.', val(c.CompMembershipNo)), fc('Country Code', val(c.CountryCode)), fc('Mobile No', val(c.MobileNo))]) +
     fr([fc('STD Code', val(c.STDCode)), fc('Landline No', val(c.LandlineNo)), fc('', '')]) +
     fr([fc('Flat, House no., Building, Company, Apartment', val(c.Address)), fc('Area, Street, Sector, Village', val(c.Area)), fc('Landmark', val(c.Landmark))]) +
@@ -555,8 +654,8 @@ async function buildDownloadDoc(id, kind, origin) {
 
   const secIV = section(
     'IV. Particulars of Complaint',
-    fr([fc('Brief Fact Statement', `${h(c.BriefStatement || '')} ${docAnchor(c.BriefAttachment)}`)]) +
-    fr([fc('Particular of Misconduct', `${h(c.ParticularMisconduct || '')} ${docAnchor(c.MisconductAttachment)}`)])
+    fr([fc('Brief Fact Statement', `${h(c.BriefStatement || '')} ${docAnchor(c.BriefAttachment, 'View Brief Fact Statement')}`)]) +
+    fr([fc('Particular of Misconduct', `${h(c.ParticularMisconduct || '')} ${docAnchor(c.MisconductAttachment, 'View Particular of Misconduct')}`)])
   );
 
   const secV = section(
@@ -567,7 +666,7 @@ async function buildDownloadDoc(id, kind, origin) {
 
   const secVI = section(
     'VI. Investigation Report',
-    fr([fc('Investigation Report', c.InvestigatingReport ? docAnchor(c.InvestigatingReport) : 'Not Available', 2)]) +
+    fr([fc('Investigation Report', c.InvestigatingReport ? docAnchor(c.InvestigatingReport, 'View Investigation Report') : 'Not Available', 2)]) +
     fr([fc('Investigation Report Available', c.IsInvestigatingReportAvailable == null ? '&nbsp;' : (Number(c.IsInvestigatingReportAvailable) === 1 ? 'Yes' : 'No'), 2)])
   );
 
@@ -590,13 +689,17 @@ async function buildDownloadDoc(id, kind, origin) {
     section(
       'IX. Document / Evidence',
       grid(['Sr.No.', 'Doc Name', 'View Document'],
-        documents.map((d, i) => [i + 1, val(d.DocumentID), fileLink(d.DocURL)]))
+        documents.map((d, i) => {
+          const docName = String(d.DocumentID || '').trim();
+          const caption = /^na$/i.test(docName) || !docName ? 'Document/Evidence' : `Document/Evidence - ${docName}`;
+          return [i + 1, val(caption), docLink(d.DocURL, 'View')];
+        }))
     ) +
     '<br />' +
     section(
       'Audio / Video Evidence',
       grid(['Sr.No.', 'File'],
-        audioVideo.map((a, i) => [i + 1, fileLink(a.Attachment)]))
+        audioVideo.map((a, i) => [i + 1, docLink(a.Attachment, 'Audio/Video Evidence')]))
     );
 
   const historyHtml = kind === 'compilation'
@@ -955,6 +1058,8 @@ router.get('/:id', async (req, res) => {
       `SELECT nc.*,
               sm.StatusName, ct.CompTypeName,
               u.NameOfTheUser AS ComplainantName, u.Email AS ComplainantEmail, u.Mob AS ComplainantMobile,
+              pm.PaymentModeName,
+              cst.StateName AS ComplainantStateName, cct.CityName AS ComplainantCityName,
               smSub.SubStatus,
               pc.CompNo AS ClubbedWithCompNo, pc.Name AS ClubbedWithComplainant,
               pu.Email AS ClubbedWithComplainantEmail, pc.ResName AS ClubbedWithResName,
@@ -964,6 +1069,9 @@ router.get('/:id', async (req, res) => {
        LEFT JOIN tbl_StatusMaster smSub ON nc.StatusID = smSub.StatusID
        LEFT JOIN tbl_CompType ct ON nc.CompType = ct.CompTypeID
        LEFT JOIN tbl_Users u ON nc.UserID = u.UserID
+       LEFT JOIN tbl_PaymentMode pm ON nc.PaymentMode = pm.PaymentModeID
+       LEFT JOIN tbl_StateMaster cst ON nc.StateID = cst.StateID
+       LEFT JOIN tbl_CityMaster cct ON nc.CityID = cct.CityID
        LEFT JOIN tbl_NewComplaint pc ON nc.ClubbedWithCompID = pc.CompID
        LEFT JOIN tbl_Users pu ON pc.UserID = pu.UserID
        LEFT JOIN tbl_StatusMaster pcs ON pc.StatusID = pcs.StatusID
@@ -971,6 +1079,18 @@ router.get('/:id', async (req, res) => {
       { id }
     );
     if (complaint.length === 0) return res.status(404).json({ error: 'Complaint not found' });
+
+    // A Sub SO may only open the offline complaints they themselves submitted,
+    // even though they are an internal role for the rest of the detail view.
+    if (Number(req.user.UserType) === 14) {
+      const own = await query(
+        'SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus WHERE CompaintID=@id AND UserID=@uid',
+        { id, uid: Number(req.user.UserID) }
+      );
+      if (!own.length) {
+        return res.status(403).json({ error: 'You are not authorised to view this complaint' });
+      }
+    }
 
     const documents = await query('SELECT * FROM tbl_ComplaintDocument WHERE CompID=@id', { id });
     const factPersons = await query('SELECT * FROM tbl_FactPersons WHERE CompID=@id', { id });
@@ -2033,6 +2153,14 @@ router.put('/:id', async (req, res) => {
     const isGov = compTypeRow.length > 0 && Number(compTypeRow[0].IsGov) === 1;
     const isDraft = b.isDraft === true || b.isDraft === 1 || b.isDraft === '1';
     const wasDraft = Number(cur.IsTemp) === 1;
+    if (!isDraft) {
+      if (!b.briefAttachment && !String(b.briefStatement || '').trim()) {
+        return res.status(400).json({ error: 'Please upload Brief Fact Statement or enter a remark' });
+      }
+      if (!b.misconductAttachment && !String(b.particularMisconduct || '').trim()) {
+        return res.status(400).json({ error: 'Please upload Particular of Misconduct or enter a remark' });
+      }
+    }
 
     // Only the complainant who filed it (or a DD / admin) may edit. The complaint
     // must be a draft, awaiting rectification (Status 3) or already re-submitted
@@ -2067,6 +2195,7 @@ router.put('/:id', async (req, res) => {
          CompType=@compType, Name=@name, EmailID=@email, CountryCode=@countryCode,
          MobileNo=@mobile, STDCode=@stdCode, LandlineNo=@landlineNo,
          Address=@address, Area=@area, Landmark=@landmark, AadharNo=@aadharNo,
+         CompMembershipNo=@compMembershipNo,
          AadharPhoto=@aadharPhoto, ComplaintantPhoto=@photo, ComplaintantSignature=@signature,
          ResName=@resName, ResRegistrationNo=@resReg, ResCountryCode=@resCountry,
          ResMobileNo=@resMobile, ResSTDCode=@resStd, ResLandlineNo=@resLandline,
@@ -2106,6 +2235,7 @@ router.put('/:id', async (req, res) => {
         area: b.area ?? cur.Area ?? null,
         landmark: b.landmark ?? cur.Landmark ?? null,
         aadharNo: b.aadharNo ?? cur.AadharNo ?? null,
+        compMembershipNo: b.compMembershipNo ?? cur.CompMembershipNo ?? null,
         aadharPhoto: b.aadharPhoto ?? cur.AadharPhoto ?? null,
         photo: b.complaintantPhoto ?? cur.ComplaintantPhoto ?? null,
         signature: b.complaintantSignature ?? cur.ComplaintantSignature ?? null,
@@ -2928,15 +3058,35 @@ router.post('/', async (req, res) => {
     const userId = req.user.UserID;
     const year = new Date().getFullYear();
     const userType = Number(req.user.UserType);
-    // Only the parties (complainant / respondent) and the internal staff file
-    // complaints; other internal roles work on the cases assigned to them.
-    if (![1, 2, 3, 4].includes(userType)) {
+    // UserType 14 is the Sub SO who files offline complaints on behalf of a
+    // complainant. The complaint itself is still recorded in the complainant's
+    // name so it shows in their own login after submission.
+    const isSubSO = userType === 14;
+    // Only the parties (complainant / respondent), the internal staff who file
+    // on behalf (DD / Sub SO) file complaints; other internal roles work on the
+    // cases assigned to them.
+    if (![1, 2, 3, 4, 14].includes(userType)) {
       return res.status(403).json({ error: 'Your account is not allowed to file a complaint' });
     }
     // A preview is persisted as a draft (IsTemp=1). Drafts are hidden from the
     // complaint register and are NOT auto-assigned to an SO; assignment happens
     // only when the complainant later submits the complaint.
     const isDraft = b.isDraft === true || b.isDraft === 1 || b.isDraft === '1';
+    // Offline complaints are submitted in one shot - the complainant login is
+    // created at that moment, so a draft would leave the case unattached.
+    if (isSubSO && isDraft) {
+      return res.status(400).json({ error: 'Offline complaints cannot be saved as a draft; please submit the complaint.' });
+    }
+    // Brief facts and particulars of misconduct each need either the signed PDF
+    // or a remark; submitting both is allowed.
+    if (!isDraft) {
+      if (!b.briefAttachment && !String(b.briefStatement || '').trim()) {
+        return res.status(400).json({ error: 'Please upload Brief Fact Statement or enter a remark' });
+      }
+      if (!b.misconductAttachment && !String(b.particularMisconduct || '').trim()) {
+        return res.status(400).json({ error: 'Please upload Particular of Misconduct or enter a remark' });
+      }
+    }
 
     // Determine gov prefix from complaint type
     const compType = await query('SELECT CompTypeID, CompTypeName, IsGov FROM tbl_CompType WHERE CompTypeID=@id', {
@@ -2946,9 +3096,11 @@ router.post('/', async (req, res) => {
     const { compNo, complaintNo } = await generateComplaintNo(isGov, year);
     const initialStatus = 1;
 
-    // Complainant details: if UserType=4 (DD) filing for someone, use body fields; otherwise from logged-in user
+    // Complainant details: DD (UserType 4) and Sub SO (UserType 14) file for
+    // someone else, so the body fields describe the complainant. Everyone else
+    // files for themselves.
     let complainant;
-    if (userType === 4) {
+    if (userType === 4 || isSubSO) {
       complainant = [{
         NameOfTheUser: b.name || null,
         Email: b.email || null,
@@ -2963,6 +3115,7 @@ router.post('/', async (req, res) => {
         STDCode: b.stdCode || null,
         LandlineNo: b.landlineNo || null,
         AadharNo: b.aadharNo || null,
+        CompMembershipNo: b.compMembershipNo || null,
         AadharPhoto: b.aadharPhoto || null,
         ComplaintantPhoto: b.complaintantPhoto || null,
         ComplaintantSignature: b.complaintantSignature || null,
@@ -2975,6 +3128,47 @@ router.post('/', async (req, res) => {
       );
     }
     const c = complainant.length ? complainant[0] : {};
+
+    // The Sub SO's complaint is owned by the complainant's own login, not by the
+    // Sub SO. Create (or reuse) that UserType-3 account before saving the case.
+    let complaintUserId = userId;
+    let complainantLogin = null;
+    if (isSubSO) {
+      if (!String(c.NameOfTheUser || '').trim() || !String(c.Email || '').trim()) {
+        return res.status(400).json({ error: 'Complainant name and email are required to create the complainant login' });
+      }
+      if (String(c.Email).trim().length > 50) {
+        return res.status(400).json({ error: 'Complainant email must be 50 characters or fewer' });
+      }
+      complainantLogin = await ensureComplainantUserForSubSO({
+        name: c.NameOfTheUser,
+        email: c.Email,
+        mobile: c.Mob,
+        countryCode: c.CountryCode,
+        address: c.Address,
+        area: c.Area,
+        landmark: c.Landmark,
+        stateId: c.StateID,
+        cityId: c.CityID,
+        pincode: c.Pincode,
+        stdCode: c.STDCode,
+        landlineNo: c.LandlineNo,
+        membershipNo: c.CompMembershipNo || b.compMembershipNo,
+        region: c.Region || b.complainantRegion,
+      });
+      if (!complainantLogin || !complainantLogin.user) {
+        return res.status(400).json({ error: 'Unable to create the complainant login' });
+      }
+      complaintUserId = Number(complainantLogin.user.UserID);
+      if (complainantLogin.created) {
+        try {
+          complainantLogin.otpEmailSent = await sendOTPEmail(c.Email, complainantLogin.otp);
+        } catch (mailErr) {
+          complainantLogin.otpEmailSent = false;
+          console.warn('complainant OTP email failed:', mailErr.message);
+        }
+      }
+    }
 
     // Lookup region from state if complainant state is provided
     let complainantRegion = b.complainantRegion || c.Region || null;
@@ -2998,7 +3192,7 @@ router.post('/', async (req, res) => {
     const result = await query(
       `INSERT INTO tbl_NewComplaint
         (ComplaintNo, CompType, Name, EmailID, CountryCode, MobileNo, STDCode, LandlineNo,
-         Address, Area, Landmark, AadharNo, AadharPhoto, ComplaintantPhoto, ComplaintantSignature,
+         Address, Area, Landmark, AadharNo, CompMembershipNo, AadharPhoto, ComplaintantPhoto, ComplaintantSignature,
          ResName, ResRegistrationNo, ResCountryCode, ResMobileNo, ResSTDCode, ResLandlineNo,
          ResProfAddress, ResCommAddress, ResEmailID,
          BriefStatement, BriefAttachment, ParticularMisconduct, MisconductAttachment,
@@ -3020,7 +3214,7 @@ router.post('/', async (req, res) => {
        OUTPUT INSERTED.CompID
        VALUES
         (@complaintNo, @compType, @name, @email, @countryCode, @mobile, @stdCode, @landlineNo,
-         @address, @area, @landmark, @aadharNo, @aadharPhoto, @photo, @signature,
+         @address, @area, @landmark, @aadharNo, @compMembershipNo, @aadharPhoto, @photo, @signature,
          @resName, @resReg, @resCountry, @resMobile, @resStd, @resLandline,
          @resProfAddr, @resCommAddr, @resEmail,
          @brief, @briefAttach, @misconduct, @misconductAttach,
@@ -3052,6 +3246,7 @@ router.post('/', async (req, res) => {
         area: b.area || c.Area || null,
         landmark: b.landmark || c.Landmark || null,
         aadharNo: b.aadharNo || null,
+        compMembershipNo: b.compMembershipNo || null,
         aadharPhoto: b.aadharPhoto || null,
         photo: b.complaintantPhoto || null,
         signature: b.complaintantSignature || null,
@@ -3077,7 +3272,7 @@ router.post('/', async (req, res) => {
         taxable: isGov ? 0 : b.taxableAmount || null,
         taxRate: isGov ? 0 : b.taxRate || null,
         paymentDetails: b.paymentDetails || null,
-        userId,
+        userId: complaintUserId,
         initialStatus,
         stateId: complainantStateId,
         cityId: b.cityId || c.CityID || null,
@@ -3124,18 +3319,30 @@ router.post('/', async (req, res) => {
     );
 
     const compId = result[0].CompID;
+    // A Sub SO's offline submission is kept as a distinct history entry so the
+    // complainant can see that the case was filed offline on their behalf.
+    const OFFLINE_SUBMITTED_STATUS = 134;
 
-    // Insert initial status record
-    await executeNonQuery(
-      `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, StatusDate, Remarks)
-       VALUES (@id, @initialStatus, @userId, GETDATE(), 'New Complaint')`,
-      { id: compId, initialStatus, userId }
-    );
+    if (isSubSO) {
+      await executeNonQuery(
+        `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, StatusDate, Remarks)
+         VALUES (@id, @offlineStatus, @userId, GETDATE(), 'Offline complaint submitted by Sub SO')`,
+        { id: compId, offlineStatus: OFFLINE_SUBMITTED_STATUS, userId }
+      );
+    } else {
+      // Insert initial status record
+      await executeNonQuery(
+        `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, StatusDate, Remarks)
+         VALUES (@id, @initialStatus, @userId, GETDATE(), 'New Complaint')`,
+        { id: compId, initialStatus, userId }
+      );
+    }
 
     // DC Flow step 1: the DP auto-assigns the received complaint to the fixed SO
     // for scrutiny (Status 2). If no SO is resolvable, the complaint stays at
     // Status 1 (Complaint Received) for a manual assignment by the DD.
     // Drafts are never assigned - they wait until the complainant submits.
+    // A Sub SO's offline complaint is submitted and forwarded in one step.
     let assignedSO = null;
     if (!isDraft) {
       const fixedSO = await resolveFixedSO();
@@ -3143,10 +3350,24 @@ router.post('/', async (req, res) => {
         assignedSO = fixedSO;
         await executeNonQuery(
           `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks)
-           VALUES (@id, 2, @userId, @userToId, GETDATE(), 'Auto-assigned to fixed SO as per DC Flow')`,
-          { id: compId, userId, userToId: fixedSO }
+           VALUES (@id, 2, @userId, @userToId, GETDATE(), @remarks)`,
+          {
+            id: compId,
+            userId,
+            userToId: fixedSO,
+            remarks: isSubSO
+              ? 'Forwarded to the SO for scrutiny (offline complaint submitted by Sub SO)'
+              : 'Auto-assigned to fixed SO as per DC Flow',
+          }
         );
         await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=2 WHERE CompID=@id', { id: compId });
+      } else if (isSubSO) {
+        // No SO was resolvable - keep the case at the offline-submission status
+        // so it is visible for manual assignment.
+        await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=@offlineStatus WHERE CompID=@id', {
+          id: compId,
+          offlineStatus: OFFLINE_SUBMITTED_STATUS,
+        });
       }
     }
 
@@ -3259,14 +3480,14 @@ router.post('/', async (req, res) => {
     await writeAudit(req, {
       compId,
       compNo,
-      action: isDraft ? 'COMPLAINT_DRAFT_CREATED' : 'COMPLAINT_CREATED',
+      action: isDraft ? 'COMPLAINT_DRAFT_CREATED' : (isSubSO ? 'OFFLINE_COMPLAINT_CREATED' : 'COMPLAINT_CREATED'),
       entity: 'COMPLAINT',
       entityId: compId,
       oldValues: null,
       newValues: {
         CompNo: compNo,
         IsTemp: isDraft ? 1 : 0,
-        StatusID: isDraft ? 1 : (assignedSO ? 2 : 1),
+        StatusID: isDraft ? 1 : (assignedSO ? 2 : (isSubSO ? OFFLINE_SUBMITTED_STATUS : 1)),
         AssignedTo: assignedSO,
         CompTypeID: b.compTypeId || null,
         Complainant: b.name || complainant?.[0]?.NameOfTheUser || null,
@@ -3277,10 +3498,22 @@ router.post('/', async (req, res) => {
       },
       details: isDraft
         ? 'Complaint draft created.'
-        : (assignedSO ? 'Complaint filed and auto-assigned to the fixed SO.' : 'Complaint filed; no SO resolved so it awaits manual assignment.'),
+        : (isSubSO
+          ? 'Offline complaint submitted by Sub SO and forwarded to the fixed SO for scrutiny.'
+          : (assignedSO ? 'Complaint filed and auto-assigned to the fixed SO.' : 'Complaint filed; no SO resolved so it awaits manual assignment.')),
     });
 
-    res.status(201).json({ CompID: compId, CompNo: compNo, IsTemp: isDraft ? 1 : 0 });
+    res.status(201).json({
+      CompID: compId,
+      CompNo: compNo,
+      IsTemp: isDraft ? 1 : 0,
+      ...(isSubSO ? {
+        ComplainantUserID: complaintUserId,
+        ComplainantLoginCreated: !!(complainantLogin && complainantLogin.created),
+        ComplainantOtpEmailSent: !!(complainantLogin && complainantLogin.otpEmailSent),
+        ComplainantEmail: c.Email || null,
+      } : {}),
+    });
   } catch (e) {
     console.error('create complaint error:', e);
     res.status(500).json({ error: 'Server error' });

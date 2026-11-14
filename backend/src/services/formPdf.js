@@ -110,17 +110,30 @@ async function buildComplaintPdf(id, opts) {
     );
   }
 
-  const paths = [];
-  docs.forEach((r) => paths.push(r.DocURL));
-  [c.BriefAttachment, c.MisconductAttachment, c.RegulatorAttachment, c.InvestigatingReport,
-    c.AadharPhoto, c.ComplaintantPhoto, c.ComplaintantSignature].forEach((p) => { if (p) paths.push(p); });
-  const files = [...new Set(paths.filter(Boolean).map((p) => p.replace(/\\/g, '/')))];
-  const attach = files
-    .map((rel) => {
-      const resolved = resolveDocumentPath(rel);
-      return resolved ? { rel, abs: resolved.abs } : null;
-    })
-    .filter(Boolean);
+  // Attachments appended after the form. Each one carries the caption of the
+  // section it came from, so the merged PDF shows a meaningful title on every
+  // appended page instead of the raw uploaded file name.
+  const attachments = [];
+  const seen = new Set();
+  const addAttachment = (value, title) => {
+    if (!value) return;
+    const rel = String(value).replace(/\\/g, '/');
+    if (!rel || seen.has(rel)) return;
+    seen.add(rel);
+    const resolved = resolveDocumentPath(rel);
+    if (resolved) attachments.push({ rel, abs: resolved.abs, title });
+  };
+  docs.forEach((r) => {
+    const docName = sanitize(r.DocumentID).trim();
+    addAttachment(r.DocURL, /^na$/i.test(docName) || !docName ? 'Document/Evidence' : `Document/Evidence - ${docName}`);
+  });
+  addAttachment(c.BriefAttachment, 'Brief Fact Statement');
+  addAttachment(c.MisconductAttachment, 'Particular of Misconduct');
+  addAttachment(c.RegulatorAttachment, 'Authorization Letter');
+  addAttachment(c.InvestigatingReport, 'Investigation Report');
+  // The complainant photo, PAN copy and signature are already part of the form
+  // itself; they must not be appended again as full-page images at the end.
+  const attach = attachments;
 
   const doc = await PDFDocument.create();
   const fontB = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -347,7 +360,11 @@ async function buildComplaintPdf(id, opts) {
   const personCols = ncell(COLS[2], [COLS[2] * 0.1, COLS[2] * 0.38, COLS[2] * 0.2, COLS[2] * 0.32], personRows.length ? personRows : [['No person(s) recorded.']]);
 
   const evidenceLines = docs.length
-    ? docs.map((d, i) => `${['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'][i] || `${i + 1}.`}  ${sanitize(d.DocumentID) || sanitize(d.DocURL).split('/').pop()}  (View Document ${sanitize(d.DocURL).split('/').pop()})`)
+    ? docs.map((d, i) => {
+        const docName = sanitize(d.DocumentID).trim();
+        const caption = /^na$/i.test(docName) || !docName ? 'Document/Evidence' : `Document/Evidence - ${docName}`;
+        return `${['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'][i] || `${i + 1}.`}  ${caption}`;
+      })
     : [];
 
   const formRowsStart = [
@@ -434,12 +451,12 @@ async function buildComplaintPdf(id, opts) {
     { cells: [
       tcell(COLS[0], '(a)(*)'),
       tcell(COLS[1], 'Brief Statement of facts'),
-      tcell(COLS[2], `${detail(c.BriefStatement)}${c.BriefAttachment ? `\nView Document (${String(c.BriefAttachment).split(/[\\/]/).pop()})` : ''}`),
+      tcell(COLS[2], `${detail(c.BriefStatement)}${c.BriefAttachment ? '\nDocument: Brief Fact Statement' : ''}`),
     ]},
     { cells: [
       tcell(COLS[0], '(b)(*)'),
       tcell(COLS[1], 'Particulars of the alleged Professional or other misconduct'),
-      tcell(COLS[2], `${detail(c.ParticularMisconduct)}${c.MisconductAttachment ? `\nView Document (${String(c.MisconductAttachment).split(/[\\/]/).pop()})` : ''}`),
+      tcell(COLS[2], `${detail(c.ParticularMisconduct)}${c.MisconductAttachment ? '\nDocument: Particular of Misconduct' : ''}`),
     ]},
     { cells: [
       tcell(COLS[0], '(c)'),
@@ -540,8 +557,8 @@ async function buildComplaintPdf(id, opts) {
     y -= 12;
     headingRow('', 'Documents Attached to this Complaint');
     for (const f of attach) {
-      const name = f.rel.split('/').pop();
-      const ext = name.split('.').pop().toLowerCase();
+      const name = f.title || f.rel.split('/').pop();
+      const ext = f.rel.split('.').pop().toLowerCase();
       const bytes = fs.readFileSync(f.abs);
 
       const stampDocs = (pages) => {

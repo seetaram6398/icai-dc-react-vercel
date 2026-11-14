@@ -14,8 +14,9 @@
  * PARTY_COMMUNICATION_STATUSES.
  */
 
-// Internal staff user types.
-const INTERNAL_USER_TYPES = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13];
+// Internal staff user types. UserType 14 is the Sub SO who files offline
+// complaints on behalf of a complainant.
+const INTERNAL_USER_TYPES = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14];
 // Users who are always treated as an outside party of a complaint.
 const EXTERNAL_USER_TYPES = [2, 3, 11];
 
@@ -23,10 +24,12 @@ const EXTERNAL_USER_TYPES = [2, 3, 11];
 // documents stay visible to the party they were issued to.  Written Statement
 // (status 15) is issued to the Respondent only, while the Rejoinder call
 // (status 22) is issued to the Complainant only.
-const PARTY_COMMUNICATION_STATUSES = [3, 13, 14, 15, 22, 51, 56, 66, 123];
+// Status 134 tells the complainant that an offline complaint was submitted on
+// their behalf by a Sub SO.
+const PARTY_COMMUNICATION_STATUSES = [3, 13, 14, 15, 22, 51, 56, 66, 123, 134];
 
 const PARTY_ROLE_COMMUNICATION_STATUSES = {
-  complainant: [3, 13, 14, 22, 51, 56, 66, 123],
+  complainant: [3, 13, 14, 22, 51, 56, 66, 123, 134],
   respondent: [15, 51],
   // Answerable members of a firm complaint act as respondents, so they must see
   // the written-statement query (status 15) issued to the firm.

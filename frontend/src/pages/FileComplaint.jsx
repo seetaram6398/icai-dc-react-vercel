@@ -21,6 +21,7 @@ const emptyForm = {
   formType: 'A',
   name: '', email: '', countryCode: '91', mobile: '', stdCode: '', landlineNo: '',
   address: '', area: '', landmark: '', stateId: '', cityId: '', pincode: '', aadharNo: '',
+  compMembershipNo: '',
   aadharPhoto: '', complaintantPhoto: '', complaintantSignature: '', complainantRegion: '',
   salutation: '', relationName: '',
   isFirm: false, firmNo: '', nameOfFirm: '', firmProfAddress: '', firmCommAddress: '',
@@ -190,6 +191,10 @@ export default function FileComplaint() {
   const isEdit = !!editId;
   const isGovEmp = Number(user?.IsGovEmp) === 1;
   const isDD = Number(user?.UserType) === 4;
+  // Sub SO (UserType 14) files an offline complaint on behalf of a complainant.
+  // The complainant fields are entered here; on submit a complainant login is
+  // created and the case is forwarded to the SO for the normal flow.
+  const isSubSO = Number(user?.UserType) === 14;
   // End-user (public) complaints filed through this page are always recorded as
   // Form I (the legacy ?type=A link). Only the DD "Suo Moto" flow keeps Form A.
   const formType = isDD ? 'A' : 'I';
@@ -272,6 +277,7 @@ export default function FileComplaint() {
     else if (k === 'stdCode' || k === 'resStdCode') v = sanitizeDigits(v, 4);
     else if (k === 'landlineNo' || k === 'resLandlineNo') v = sanitizeDigits(v, 8);
     else if (k === 'aadharNo') v = sanitizeAlphaNumUpper(v, 10);
+    else if (k === 'compMembershipNo') v = sanitizeAlphaNumUpper(v, 20);
     else if (k === 'gstinNo') v = sanitizeUpper(v, 15);
     else if (k === 'transRefNo' || k === 'instrumentNo') v = sanitizeUpper(v, 30);
     else if (k === 'taxableAmount') v = v.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
@@ -308,7 +314,7 @@ export default function FileComplaint() {
   }, [isGovEmp, user]);
 
   useEffect(() => {
-    if (user && !isDD) {
+    if (user && !isDD && !isSubSO) {
       setForm((f) => {
         const stateObj = states.find((s) => String(s.value) === String(user.StateID));
         return {
@@ -338,7 +344,7 @@ export default function FileComplaint() {
         api.get(`/masters/7?option1=${user.StateID}`).then((r) => setCities(r.data)).catch(() => {});
       }
     }
-  }, [user, isDD]);
+  }, [user, isDD, isSubSO]);
 
   const loadCities = useCallback(async (stateId, setter) => {
     if (!stateId) { setter([]); return; }
@@ -432,6 +438,7 @@ export default function FileComplaint() {
           cityId: d.CityID != null ? String(d.CityID) : '',
           pincode: d.Pincode != null ? String(d.Pincode).trim().replace(/\.0+$/, '') : (d.PinCode != null ? String(d.PinCode).trim().replace(/\.0+$/, '') : ''),
           aadharNo: d.AadharNo || '',
+          compMembershipNo: d.CompMembershipNo || '',
           aadharPhoto: d.AadharPhoto || '',
           complaintantPhoto: d.ComplaintantPhoto || '',
           complaintantSignature: d.ComplaintantSignature || '',
@@ -839,6 +846,9 @@ export default function FileComplaint() {
     // }
     if (!form.name) return 'Please enter Name';
     if (!isValidName(form.name)) return 'Please enter a valid Name (letters, spaces, dots, hyphens only)';
+    if (isSubSO && form.compMembershipNo && !/^[A-Za-z0-9-]{5,20}$/.test(String(form.compMembershipNo).trim())) {
+      return 'Please enter a valid Complainant Membership No (5-20 letters/digits)';
+    }
     if (!form.email) return 'Please enter Email ID';
     if (!isValidEmail(form.email)) return 'Please enter a valid Email ID';
     if (!form.countryCode) return 'Please enter Country Code';
@@ -903,8 +913,12 @@ export default function FileComplaint() {
       if (!form.resCityId) return 'Please select Communication City';
     }
 
-    if (!form.briefAttachment) return 'Please upload Brief Fact Statement';
-    if (!form.misconductAttachment) return 'Please upload Particular of Misconduct';
+    if (!form.briefAttachment && !String(form.briefStatement || '').trim()) {
+      return 'Please upload Brief Fact Statement or enter a remark';
+    }
+    if (!form.misconductAttachment && !String(form.particularMisconduct || '').trim()) {
+      return 'Please upload Particular of Misconduct or enter a remark';
+    }
     if (scheduleList.length === 0) return 'Please add at least one allegation / misconduct';
 
     const isGovType = GOV_COMP_TYPE_LABELS.includes(ctLabel);
@@ -944,6 +958,7 @@ export default function FileComplaint() {
         name: T(form.name), email: T(form.email),
         address: T(form.address), area: T(form.area), landmark: T(form.landmark),
         pincode: T(form.pincode), aadharNo: T(form.aadharNo).toUpperCase(),
+        compMembershipNo: T(form.compMembershipNo).toUpperCase(),
         nameOfFirm: T(form.nameOfFirm), firmNo: T(form.firmNo).toUpperCase(),
         resName: T(form.resName), resRegistrationNo: T(form.resRegistrationNo).toUpperCase(),
         resMobile: T(form.resMobile), resEmail: T(form.resEmail),
@@ -973,14 +988,17 @@ export default function FileComplaint() {
       }
       // Preview is stored as a draft only. The complaint is not treated as
       // submitted and is not auto-assigned to an SO until Submit is clicked.
-      const savePayload = { ...payload, isDraft: preview };
+      // Offline complaints are always submitted in one step (no draft) because
+      // the complainant login is created during submission.
+      const saveAsDraft = preview && !isSubSO;
+      const savePayload = { ...payload, isDraft: saveAsDraft };
       let data;
       if (isEdit) {
         data = (await api.put(`/complaints/${editId}`, savePayload)).data;
       } else {
         data = (await api.post('/complaints', savePayload)).data;
       }
-      if (preview) {
+      if (saveAsDraft) {
         if (isEdit) {
           popup.success('Draft updated. You can continue editing and submit when ready.');
         } else {
@@ -993,6 +1011,17 @@ export default function FileComplaint() {
             ? `Complaint ${data.CompNo || editId} submitted successfully`
             : 'Complaint updated and sent to SO successfully');
           navigate(`/complaints/${data.CompID || editId}`);
+        } else if (isSubSO) {
+          popup.success(
+            `Offline complaint ${data.CompNo} submitted and forwarded to the SO. ` +
+            (data.ComplainantLoginCreated
+              ? `A complainant login was created for ${data.ComplainantEmail}` +
+                (data.ComplainantOtpEmailSent
+                  ? ' and the OTP has been emailed.'
+                  : '; the OTP email could not be sent, so the complainant can request one from the login page.')
+              : `The existing complainant login (${data.ComplainantEmail}) can now view this case.`)
+          );
+          navigate(`/complaints/${data.CompID}`);
         } else {
           popup.success(`Complaint ${data.CompNo} filed successfully`);
           navigate(`/complaints/${data.CompID}`);
@@ -1021,14 +1050,20 @@ export default function FileComplaint() {
         <button className="btn btn-outline-secondary me-3 btn-sm" onClick={goBack}><i className="bi bi-arrow-left"></i></button>
         <div>
           <h4 className="mb-0">
-            {isDraftComplaint ? 'Draft Complaint' : isEdit ? 'Edit Complaint' : 'Register New Complaint'}
+            {isDraftComplaint
+              ? 'Draft Complaint'
+              : isEdit
+                ? 'Edit Complaint'
+                : isSubSO ? 'Register Offline Complaint' : 'Register New Complaint'}
             <span className="fw-bold ms-2" style={{ fontSize: '0.99rem' }}>(FORM {formType})</span>
           </h4>
           {isDraftComplaint
             ? <small className="text-muted">This complaint is saved as a draft. Update the details below and click Submit Complaint when ready. It will be treated as submitted, and assigned to the SO, only after you submit it.</small>
             : isEdit
               ? <small className="text-muted">Modify all complaint details using the complaint submission form. The updated complaint will be sent to the SO for re-scrutiny.</small>
-              : (!isDD && <small className="text-muted">{formTitle}</small>)}
+              : isSubSO
+                ? <small className="text-muted">Enter the complainant's details below. On submit, a complainant login is created, the case is marked as an offline submission, and it is forwarded to the SO for scrutiny.</small>
+                : (!isDD && <small className="text-muted">{formTitle}</small>)}
         </div>
       </div>
 
@@ -1082,13 +1117,25 @@ export default function FileComplaint() {
               </>
             )}
             */}
+            {isSubSO && (
+              <div className="col-md-4">
+                <label className="form-label">Membership No.</label>
+                <input
+                  className="form-control"
+                  maxLength={20}
+                  value={form.compMembershipNo}
+                  onChange={set('compMembershipNo')}
+                  placeholder="ICAI membership no (if applicable)"
+                />
+              </div>
+            )}
             <div className="col-md-4">
               <label className="form-label">Name *</label>
-              <input className="form-control" value={form.name} onChange={set('name')} readOnly={!isDD} />
+              <input className="form-control" value={form.name} onChange={set('name')} readOnly={!isDD && !isSubSO} />
             </div>
             <div className="col-md-4">
               <label className="form-label">Email ID *</label>
-              <input type="email" className="form-control" maxLength={100} value={form.email} onChange={set('email')} readOnly={!isDD} />
+              <input type="email" className="form-control" maxLength={100} value={form.email} onChange={set('email')} readOnly={!isDD && !isSubSO} />
             </div>
             <div className="col-md-2">
               <label className="form-label">Country Code *</label>
@@ -1098,7 +1145,7 @@ export default function FileComplaint() {
             </div>
             <div className="col-md-3">
               <label className="form-label">Mobile No *</label>
-              <input className="form-control" value={form.mobile} onChange={set('mobile')} readOnly={!isDD} inputMode="numeric" maxLength={String(form.countryCode) === '91' ? 10 : 15} />
+              <input className="form-control" value={form.mobile} onChange={set('mobile')} readOnly={!isDD && !isSubSO} inputMode="numeric" maxLength={String(form.countryCode) === '91' ? 10 : 15} />
             </div>
             <div className="col-md-2">
               <label className="form-label">STD Code</label>
@@ -1348,8 +1395,11 @@ export default function FileComplaint() {
         <div className="card-body">
           <div className="row g-3">
             <div className="col-12">
+              <div className="small text-muted mb-1">
+                <span className="text-danger">*</span> Upload a file or enter a remark (at least one is mandatory; both are allowed).
+              </div>
               <FileUploadInput label="Brief Fact Statement (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
-                accept=".pdf" sizeMB={10} required
+                accept=".pdf" sizeMB={10}
                 current={form.briefAttachment} onUpload={(path) => setForm({ ...form, briefAttachment: path })} />
               <label className="form-label mt-3">Brief Fact Statement (Remark)</label>
               <textarea className="form-control" rows={3} value={form.briefStatement}
@@ -1357,8 +1407,11 @@ export default function FileComplaint() {
                 placeholder="Enter remark for Brief Fact Statement" />
             </div>
             <div className="col-12">
+              <div className="small text-muted mb-1">
+                <span className="text-danger">*</span> Upload a file or enter a remark (at least one is mandatory; both are allowed).
+              </div>
               <FileUploadInput label="Particular of Misconduct (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
-                accept=".pdf" sizeMB={10} required
+                accept=".pdf" sizeMB={10}
                 current={form.misconductAttachment} onUpload={(path) => setForm({ ...form, misconductAttachment: path })} />
               <label className="form-label mt-3">Particular of Misconduct (Remark)</label>
               <textarea className="form-control" rows={3} value={form.particularMisconduct}
@@ -1602,9 +1655,11 @@ export default function FileComplaint() {
       {/* ===== SUBMIT ===== */}
       <div className="d-flex gap-3 mb-5">
         <button className="btn btn-primary btn-lg" disabled={busy} onClick={() => handleSubmit(false)} type="button">
-          {busy ? <><span className="spinner-border spinner-border-sm me-2"></span>Submitting...</> : <><i className="bi bi-send me-2"></i>{isEdit && !isDraftComplaint ? 'Submit Edited Complaint' : 'Submit Complaint'}</>}
+          {busy
+            ? <><span className="spinner-border spinner-border-sm me-2"></span>Submitting...</>
+            : <><i className="bi bi-send me-2"></i>{isEdit && !isDraftComplaint ? 'Submit Edited Complaint' : isSubSO ? 'Submit Offline Complaint' : 'Submit Complaint'}</>}
         </button>
-        {!isEdit && (
+        {!isEdit && !isSubSO && (
           <button className="btn btn-outline-secondary btn-lg" disabled={busy} onClick={() => handleSubmit(true)} type="button">
             <i className="bi bi-eye me-2"></i>Preview Complaint
           </button>

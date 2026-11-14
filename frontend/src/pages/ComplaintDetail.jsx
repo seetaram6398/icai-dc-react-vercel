@@ -114,6 +114,7 @@ const DESIGNATIONS = {
   10: 'Reporting Officer, Disciplinary Directorate, ICAI',
   11: 'Chief Accounting Examiner, Disciplinary Directorate, ICAI',
   13: 'Vetting Officer, Disciplinary Directorate, ICAI',
+  14: 'Sub SO, Disciplinary Directorate, ICAI',
 };
 
 function DetailRow({ label, value }) {
@@ -2522,6 +2523,20 @@ export default function ComplaintDetail() {
     : isExternalParty
       ? partyHistory
       : (c.statusHistory || []).filter((h) => Number(h.UserID) === Number(user?.UserID));
+  const offlineSubmission = (c.statusHistory || []).find((h) => Number(h.StatusID) === 134) || null;
+  // Files uploaded with the complaint itself. They are shown to the internal
+  // staff (SO, DD, Admin, ...) so every input filed by the complainant is
+  // reachable directly from the complaint detail page.
+  const complaintAttachments = [
+    ['AadharPhoto', 'PAN No. Photo'],
+    ['ComplaintantPhoto', 'Complainant Photo'],
+    ['ComplaintantSignature', 'Complainant Signature'],
+    ['RegulatorAttachment', 'Authorization Letter'],
+    ['InvestigatingReport', 'Investigation Report'],
+  ].filter(([key]) => c[key]);
+  const complaintAttachmentCount = viewerIsInternal
+    ? complaintAttachments.length + (c.BriefAttachment ? 1 : 0) + (c.MisconductAttachment ? 1 : 0)
+    : 0;
   const clubbingRec = (c.statusHistory || []).find((h) => Number(h.StatusID) === 123) || null;
   const clubbingDocs = (c.statusHistory || []).filter(
     (h) => h.Attachment && [66, 68, 69, 123].includes(Number(h.StatusID))
@@ -2796,6 +2811,18 @@ export default function ComplaintDetail() {
         </div>
       )}
 
+      {offlineSubmission && (
+        <div className="alert alert-info small mb-4">
+          <strong>Offline complaint submitted by Sub SO.</strong>{' '}
+          This complaint was received offline
+          {offlineSubmission.ByUserName ? ` and submitted by ${offlineSubmission.ByUserName}` : ''}
+          {' '}on behalf of the complainant and
+          {Number(c.StatusID) === 134
+            ? ' is awaiting assignment to the Scrutiny Officer.'
+            : ' forwarded to the Scrutiny Officer.'}
+        </div>
+      )}
+
       {Number(c.StatusID) === 130 && (
         <div className="alert alert-success small mb-4">
           <strong>Withdrawal permitted.</strong> The complaint stands withdrawn.
@@ -3045,6 +3072,120 @@ export default function ComplaintDetail() {
             </dl>
           </Section>
 
+          {viewerIsInternal && (
+            <Section icon="bi-person" title="Complainant Details">
+              <dl className="row mb-0">
+                <DetailRow label="Name" value={c.Name || c.ComplainantName} />
+                <DetailRow label="Email" value={c.EmailID || c.ComplainantEmail} />
+                <DetailRow label="Membership No" value={c.CompMembershipNo} />
+                <DetailRow
+                  label="Mobile"
+                  value={[c.CountryCode ? `+${c.CountryCode}` : '', c.MobileNo].filter(Boolean).join(' ')}
+                />
+                <DetailRow label="STD / Landline" value={[c.STDCode, c.LandlineNo].filter(Boolean).join(' / ')} />
+                <DetailRow label="S/D/O" value={c.Salutation} />
+                <DetailRow label="Relation Name" value={c.RelationName} />
+                <DetailRow label="PAN No." value={c.AadharNo} />
+                <DetailRow
+                  label="Address"
+                  value={[c.Address, c.Area, c.Landmark].filter(Boolean).join(', ')}
+                />
+                <DetailRow
+                  label="State / City"
+                  value={[c.ComplainantStateName, c.ComplainantCityName].filter(Boolean).join(' / ')}
+                />
+                <DetailRow label="Pincode" value={c.PinCode} />
+                <DetailRow label="Region" value={c.Region} />
+              </dl>
+            </Section>
+          )}
+
+          {viewerIsInternal && (
+            <Section icon="bi-file-text" title="Particulars of Complaint">
+              <div className="row g-3">
+                <div className="col-md-6">
+                  <div className="small fw-semibold mb-1">Brief Fact Statement (Remark)</div>
+                  <div className="text-muted" style={{ whiteSpace: 'pre-wrap' }}>
+                    {c.BriefStatement || '—'}
+                  </div>
+                  <div className="mt-2">
+                    {c.BriefAttachment ? (
+                      <a
+                        className="btn btn-sm btn-outline-primary"
+                        href={`/documents/${c.BriefAttachment}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <i className="bi bi-file-earmark-pdf me-1" />
+                        View Brief Fact Statement
+                      </a>
+                    ) : (
+                      <span className="small text-muted">No document uploaded</span>
+                    )}
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="small fw-semibold mb-1">Particular of Misconduct (Remark)</div>
+                  <div className="text-muted" style={{ whiteSpace: 'pre-wrap' }}>
+                    {c.ParticularMisconduct || '—'}
+                  </div>
+                  <div className="mt-2">
+                    {c.MisconductAttachment ? (
+                      <a
+                        className="btn btn-sm btn-outline-primary"
+                        href={`/documents/${c.MisconductAttachment}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <i className="bi bi-file-earmark-pdf me-1" />
+                        View Particular of Misconduct
+                      </a>
+                    ) : (
+                      <span className="small text-muted">No document uploaded</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Section>
+          )}
+
+          {viewerIsInternal && (
+            <Section icon="bi-credit-card" title="Payment & Other Details">
+              <dl className="row mb-0">
+                <DetailRow
+                  label="Payment Mode"
+                  value={c.PaymentModeName || PAY_MODE_LABELS[c.PaymentMode] || c.PaymentMode}
+                />
+                <DetailRow label="Payment Date" value={fmtDate(c.PaymentDate)} />
+                <DetailRow label="Transaction Ref No" value={c.TransRefNo} />
+                <DetailRow label="Instrument No" value={c.InstrumentNo} />
+                <DetailRow label="Instrument Date" value={fmtDate(c.InstrumentDate)} />
+                <DetailRow label="Taxable Amount" value={fmtMoney(c.TaxableAmount)} />
+                <DetailRow label="Tax Rate" value={c.TaxRate} />
+                <DetailRow label="GSTIN" value={c.GSTINNo} />
+                <DetailRow label="GST Type" value={c.GSTType} />
+                <DetailRow label="Payment Details" value={c.PaymentDetails} />
+                <DetailRow label="Nature of Allegation" value={c.NatureOfAllegation} />
+                <DetailRow label="Regulator Name" value={c.RegulatorName} />
+                <DetailRow label="Regulator Designation" value={c.RegulatorDesignation} />
+                <DetailRow label="Verification Date" value={fmtDate(c.VerificationDate)} />
+                <DetailRow label="Verification Place" value={c.VerificationPlace} />
+                <DetailRow
+                  label="Investigation Report"
+                  value={
+                    c.InvestigatingReport ? (
+                      <a href={`/documents/${c.InvestigatingReport}`} target="_blank" rel="noreferrer">
+                        View Report
+                      </a>
+                    ) : (
+                      'Not available'
+                    )
+                  }
+                />
+              </dl>
+            </Section>
+          )}
+
           <Section icon="bi-person-badge" title="Respondent & Parties">
             <dl className="row mb-3">
               <DetailRow
@@ -3059,8 +3200,17 @@ export default function ComplaintDetail() {
               <DetailRow label="Registration / Firm No" value={c.ResRegistrationNo || c.FirmNo} />
               <DetailRow label="Email" value={c.ResEmailID} />
               <DetailRow label="Mobile" value={c.ResMobileNo} />
+              <DetailRow label="STD / Landline" value={[c.ResSTDCode, c.ResLandlineNo].filter(Boolean).join(' / ')} />
               <DetailRow label="Professional Address" value={c.ResProfAddress} />
+              <DetailRow
+                label="Professional State / City"
+                value={[c.RStateName, c.RCityName || c.RCityname].filter(Boolean).join(' / ')}
+              />
               <DetailRow label="Communication Address" value={c.ResCommAddress} />
+              <DetailRow
+                label="Professional / Communication Region"
+                value={[c.RRegion, c.RComRegion].filter(Boolean).join(' / ')}
+              />
             </dl>
 
             {c.factPersons?.length > 0 && (
@@ -3115,11 +3265,12 @@ export default function ComplaintDetail() {
             title="Documents & Attachments"
             right={
               <span className="badge-soft badge-soft-neutral">
-                {(c.documents?.length || 0) + (c.audioVideo?.length || 0) + (c.internalDocuments?.length || 0)} files
+                {(c.documents?.length || 0) + (c.audioVideo?.length || 0) +
+                  (c.internalDocuments?.length || 0) + complaintAttachmentCount} files
               </span>
             }
           >
-            {c.documents?.length === 0 && c.audioVideo?.length === 0 && !c.internalDocuments?.length ? (
+            {c.documents?.length === 0 && c.audioVideo?.length === 0 && !c.internalDocuments?.length && complaintAttachmentCount === 0 ? (
               <div className="empty-state p-3">
                 <i className="bi bi-folder-plus mb-1" />
                 <p className="mb-0">No documents uploaded for this complaint.</p>
@@ -3133,7 +3284,32 @@ export default function ComplaintDetail() {
                       {c.documents.map((d) => (
                         <a href={`/documents/${d.DocURL}`} target="_blank" rel="noreferrer" key={d.CompAttachID} className="doc-chip">
                           <i className={`bi ${fileIcon(d.DocURL)}`} />
-                          <span className="doc-name">{d.DocURL}</span>
+                          <span className="doc-name">
+                            {d.DocumentID && String(d.DocumentID).trim() && !/^na$/i.test(String(d.DocumentID).trim())
+                              ? d.DocumentID
+                              : 'Document/Evidence'}
+                          </span>
+                          <span className="small text-muted ms-2">Document/Evidence</span>
+                          <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {viewerIsInternal && complaintAttachments.length > 0 && (
+                  <div>
+                    <h6 className="text-primary mb-2">Complainant Uploads</h6>
+                    <div className="d-flex flex-column gap-2">
+                      {complaintAttachments.map(([key, label]) => (
+                        <a
+                          href={`/documents/${c[key]}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          key={key}
+                          className="doc-chip"
+                        >
+                          <i className={`bi ${fileIcon(c[key])}`} />
+                          <span className="doc-name">{label}</span>
                           <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
                         </a>
                       ))}
@@ -3147,7 +3323,8 @@ export default function ComplaintDetail() {
                       {c.audioVideo.map((av) => (
                         <a href={`/documents/${av.Attachment}`} target="_blank" rel="noreferrer" key={av.AttachID} className="doc-chip">
                           <i className={`bi ${fileIcon(av.Attachment)}`} />
-                          <span className="doc-name">{av.Attachment}</span>
+                          <span className="doc-name">Audio/Video Evidence</span>
+                          <span className="small text-muted ms-2">{av.Attachment}</span>
                           <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
                         </a>
                       ))}
@@ -3173,7 +3350,8 @@ export default function ComplaintDetail() {
                         <div className="d-flex flex-wrap gap-2 align-items-center" key={`idoc-${d.CompStatusID}`}>
                           <a href={`/documents/${d.Attachment}`} target="_blank" rel="noreferrer" className="doc-chip">
                             <i className="bi bi-file-earmark-pdf" />
-                            <span className="doc-name">{d.Attachment}</span>
+                            <span className="doc-name">{d.StatusName || 'Internal Document'}</span>
+                            <span className="small text-muted ms-2">{d.Attachment}</span>
                             <i className="bi bi-box-arrow-up-right text-muted ms-auto" />
                           </a>
                           <span className="small text-muted">

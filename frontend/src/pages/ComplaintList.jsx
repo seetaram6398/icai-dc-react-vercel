@@ -36,8 +36,11 @@ function ComplaintList() {
   const ut = Number(user?.UserType);
   const aspxView = ut === 3;
   const isParty = ut === 2 || ut === 3;
-  const canFileComplaint = [1, 2, 3].includes(ut) && Number(user?.IsFirmUser) !== 1;
-  const fileComplaintLabel = ut === 1 ? 'File New Complaint' : 'Add New Complaint';
+  const isSubSO = ut === 14;
+  const canFileComplaint = [1, 2, 3, 14].includes(ut) && Number(user?.IsFirmUser) !== 1;
+  const fileComplaintLabel = ut === 1
+    ? 'File New Complaint'
+    : ut === 14 ? 'File Offline Complaint' : 'Add New Complaint';
   // Rule 5(4) - the staff (Admin / DD / SO) also see the clubbing and closure
   // relationships in the complaint list; the parties only ever see complaint
   // numbers, never any other detail of a clubbed complaint.
@@ -204,18 +207,24 @@ function ComplaintList() {
           </div>
           <div className="report-header-text">
             <h2 className="page-title">Complaint Register</h2>
-            <p className="page-subtitle">
-              Browse all registered complaints and their current stage of processing
-            </p>
+            {!isSubSO && (
+              <p className="page-subtitle">
+                Browse all registered complaints and their current stage of processing
+              </p>
+            )}
           </div>
         </div>
         <div className="page-header-actions">
-          <span className="header-date">
-            {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-          </span>
-          <span className="badge-soft badge-soft-neutral">
-            <i className="bi bi-collection" /> {rows.length} complaint{rows.length === 1 ? '' : 's'}
-          </span>
+          {!isSubSO && (
+            <span className="header-date">
+              {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            </span>
+          )}
+          {!isSubSO && (
+            <span className="badge-soft badge-soft-neutral">
+              <i className="bi bi-collection" /> {rows.length} complaint{rows.length === 1 ? '' : 's'}
+            </span>
+          )}
           <button
             type="button"
             className="admin-btn-icon"
@@ -288,7 +297,7 @@ function ComplaintList() {
         </div>
       )}
 
-      {!loading && !isParty && rows.length > 0 && (
+      {!loading && !isParty && !isSubSO && rows.length > 0 && (
         <div className="stat-row" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
           <div className="stat-box" style={{ borderLeft: '3px solid #1a4a8a' }}>
             <div className="stat-box-icon" style={{ background: '#e8effa', color: '#1a4a8a' }}>
@@ -337,19 +346,21 @@ function ComplaintList() {
             <i className="bi bi-funnel" />
             Filter Complaints
           </div>
-          <span className="badge-soft badge-soft-neutral">
-            {isParty
-              ? actionPending
-                ? 'No Action Taken'
-                : 'All Complaints'
-              : statusIds && activeStatusName
-                ? `Showing: ${statusText(activeStatusName.label)}`
-                : 'All stages'}
-          </span>
+          {!isSubSO && (
+            <span className="badge-soft badge-soft-neutral">
+              {isParty
+                ? actionPending
+                  ? 'No Action Taken'
+                  : 'All Complaints'
+                : statusIds && activeStatusName
+                  ? `Showing: ${statusText(activeStatusName.label)}`
+                  : 'All stages'}
+            </span>
+          )}
         </div>
         <div className="card-body">
           <form className="row g-3 align-items-end" onSubmit={(e) => { e.preventDefault(); applyFilter(draft.replace(/\s/g, '')); }}>
-            <div className="col-md-3">
+            <div className={isSubSO ? 'col-md-4' : 'col-md-3'}>
               <label className="form-label small fw-semibold">Search</label>
               <input
                 className="form-control"
@@ -376,7 +387,7 @@ function ComplaintList() {
                 onChange={(e) => setQ((prev) => ({ ...prev, dateTo: e.target.value }))}
               />
             </div>
-            {!isParty && (
+            {!isParty && !isSubSO && (
               <div className="col-md-2">
                 <label className="form-label small fw-semibold">Status</label>
                 <select
@@ -391,7 +402,7 @@ function ComplaintList() {
                 </select>
               </div>
             )}
-            <div className="col-md-3 d-flex gap-2 justify-content-md-end">
+            <div className={`${isSubSO ? 'col-md-4' : 'col-md-3'} d-flex gap-2 justify-content-md-end`}>
               <button type="submit" className="btn btn-primary" disabled={loading}>
                 <i className={`${loading ? 'spinner-border spinner-border-sm me-1' : 'bi bi-search me-1'}`} role="status" aria-hidden="true" />
                 {loading ? 'Loading...' : 'Apply'}
@@ -414,7 +425,7 @@ function ComplaintList() {
                 ? statusText(activeStatusName.label)
                 : 'All Complaints'}
           </div>
-          <span className="badge-soft badge-soft-primary">{rows.length} shown</span>
+          {!isSubSO && <span className="badge-soft badge-soft-primary">{rows.length} shown</span>}
         </div>
         <div className="card-body p-0">
           {loading ? (
@@ -559,7 +570,7 @@ function ComplaintList() {
                   ))
                   )}
                 </tbody>
-                {!aspxView && (
+                {!aspxView && !isSubSO && (
                 <tfoot>
                   <tr>
                     <td colSpan="7">Total</td>

@@ -39,7 +39,10 @@ router.post('/request-otp', async (req, res) => {
     const email = (req.body.email || '').trim();
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    let user = (await query('SELECT UserID, Email, NameOfTheUser, IsDeactivated FROM tbl_Users WHERE Email=@email', { email }))[0];
+    let user = (await query(
+      'SELECT UserID, Email, NameOfTheUser, IsDeactivated FROM tbl_Users WHERE LOWER(LTRIM(RTRIM(Email)))=LOWER(LTRIM(RTRIM(@email)))',
+      { email }
+    ))[0];
 
     // No existing account? If the email belongs to a respondent on a complaint
     // (tbl_NewComplaint.ResEmailID), create (or repair) their UserType-2 account
@@ -109,7 +112,7 @@ router.post('/verify-otp', async (req, res) => {
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
 
     const rows = await query(
-      'SELECT UserID, LoginID, NameOfTheUser, Email, MembershipNo, UserType, OTP, IsDeactivated, IsVerify FROM tbl_Users WHERE Email=@email',
+      'SELECT UserID, LoginID, NameOfTheUser, Email, MembershipNo, UserType, OTP, IsDeactivated, IsVerify FROM tbl_Users WHERE LOWER(LTRIM(RTRIM(Email)))=LOWER(LTRIM(RTRIM(@email)))',
       { email }
     );
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });

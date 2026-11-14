@@ -75,6 +75,14 @@ router.get('/', async (req, res) => {
       conds.push('vw_DashBoard.CompID IN (SELECT CompID FROM tbl_NewComplaint WHERE UserID=@userId)');
       params.userId = String(req.user.UserID);
     }
+    if (userType === 14) {
+      // Sub SO sees only the offline complaints they submitted (recorded in the
+      // status history with their user id).
+      conds.push(
+        'vw_DashBoard.CompID IN (SELECT CompaintID FROM tbl_ComplaintStatus WHERE UserID=@userId)'
+      );
+      params.userId = Number(req.user.UserID);
+    }
 
     let sqlStr = `
       SELECT StatusID, StatusName,
