@@ -74,7 +74,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState({ viewComplaints: true, fileComplaint: true });
+  const [openGroups, setOpenGroups] = useState({ viewComplaints: true, fileComplaint: true, myComplaints: true });
   const ut = Number(user?.UserType);
   const isFirmUser = Number(user?.IsFirmUser) === 1;
   const roleLabel = isFirmUser ? 'Firm' : (ROLE_LABELS[ut] || `Role ${ut}`);
@@ -118,6 +118,26 @@ export default function Layout() {
     const isActive =
       location.pathname === '/complaints' &&
       (hasStatus ? location.search.includes('statusIds=') : !location.search.includes('statusIds='));
+    return (
+      <button
+        key={to}
+        type="button"
+        className={`admin-nav-subitem${isActive ? ' active' : ''}`}
+        onClick={() => {
+          navigate(to);
+          setMenuOpen(false);
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  const myComplaintsSubLink = (to, label) => {
+    const [path, query = ''] = to.split('?');
+    const isActive =
+      location.pathname === path &&
+      (query ? location.search === `?${query}` : location.search === '');
     return (
       <button
         key={to}
@@ -256,7 +276,7 @@ export default function Layout() {
                   'file-earmark-text',
                   <>
                     {subLink('/complaints', ut === 11 ? 'All Complaints' : 'All')}
-                    {ut === 3 && subLink('/complaints?statusIds=3', 'Pending for Modification')}
+                    {ut === 3 && subLink('/complaints?statusIds=3', 'Complaint with Defect')}
                     {ut === 3 && subLink('/withdrawal/update', 'Withdrawal of Complaint')}
                     {DISPOSAL_STATUSES[ut] && subLink(`/complaints?statusIds=${DISPOSAL_STATUSES[ut]}`, 'Disposal')}
                   </>
@@ -309,7 +329,21 @@ export default function Layout() {
                         </>
                       ))}
 
-              {MY_COMPLAINTS_UT.includes(ut) && ut !== 3 && link('/my-complaints', isFirmUser ? 'My Cases' : 'My Complaints', 'person-lines-fill')}
+              {MY_COMPLAINTS_UT.includes(ut) && ut !== 3 &&
+                (isFirmUser
+                  ? link('/my-complaints', 'My Cases', 'person-lines-fill')
+                  : navGroup(
+                        'myComplaints',
+                        'My Complaints',
+                        'person-lines-fill',
+                        <>
+                          {myComplaintsSubLink('/my-complaints', 'All')}
+                          {myComplaintsSubLink(
+                            '/my-complaints?statusIds=3&scope=complainant',
+                            'Complaint with Defect'
+                          )}
+                        </>
+                      ))}
 
               {!isFirmUser && MEMBER_REPORTS_UT.includes(ut) && (
                 <>

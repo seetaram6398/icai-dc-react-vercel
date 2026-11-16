@@ -57,8 +57,6 @@ const DEFECT_COLUMN_OPTIONS = [
   'Column 7 of Form I',
   'verification part',
   'Signature portion (above & below verification)',
-  'separate window for fee submission, not available on Form I',
-  'Others',
 ];
 
 function escapeHtml(value) {
@@ -1883,6 +1881,7 @@ export default function ComplaintDetail() {
   const [soFile, setSoFile] = useState(null);
   const [soAction, setSoAction] = useState('');
   const [soDefectCatalog, setSoDefectCatalog] = useState([]);
+  const [soDefectColumns, setSoDefectColumns] = useState(DEFECT_COLUMN_OPTIONS);
   const [soDefectCodes, setSoDefectCodes] = useState([]);
   const [soDefectSearch, setSoDefectSearch] = useState('');
   const [soOtherDefect, setSoOtherDefect] = useState(false);
@@ -1977,7 +1976,10 @@ export default function ComplaintDetail() {
       .catch(() => {});
     api
       .get('/complaints/defect-catalog')
-      .then((res) => setSoDefectCatalog(res.data?.defects || []))
+      .then((res) => {
+        setSoDefectCatalog(res.data?.defects || []);
+        setSoDefectColumns(res.data?.columns?.length ? res.data.columns : DEFECT_COLUMN_OPTIONS);
+      })
       .catch(() => setSoDefectCatalog([]));
   }, [id, navigate]);
 
@@ -4282,23 +4284,22 @@ export default function ComplaintDetail() {
                            </div>
                            <div className="mb-2">
                              <label className="form-label small fw-semibold mb-1">
-                               Relevant column / input of Form I <span className="text-danger">*</span>
+                               Relevant column of Form I <span className="text-danger">*</span>
                              </label>
-                             <input
-                               type="text"
-                               className="form-control form-control-sm"
-                               list="soDefectColumnOptions"
+                             <select
+                               className="form-select form-select-sm"
                                value={soCustomDefect.relevantColumn}
                                onChange={(e) =>
                                  setSoCustomDefect((prev) => ({ ...prev, relevantColumn: e.target.value }))
                                }
-                               placeholder="Select or type the related column / input..."
-                             />
-                             <datalist id="soDefectColumnOptions">
-                               {DEFECT_COLUMN_OPTIONS.map((option) => (
-                                 <option value={option} key={option} />
+                             >
+                               <option value="">Select Form I column...</option>
+                               {soDefectColumns.map((option) => (
+                                 <option value={option} key={option}>
+                                   {option}
+                                 </option>
                                ))}
-                             </datalist>
+                             </select>
                            </div>
                            <div>
                              <label className="form-label small fw-semibold mb-1">

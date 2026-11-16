@@ -4,6 +4,19 @@
  * from the Disciplinary Directorate's "discrepancies and relevant
  * communication" workbook. Keep this list in sync with that workbook.
  */
+const FORM_I_COLUMNS = [
+  'Column 1 of Form I',
+  'Column 1 of Form I and verification part',
+  'Column 2 of Form I',
+  'Column 3 of Form I',
+  'Column 4 of Form I',
+  'Column 5 of Form I',
+  'Column 6 of Form I',
+  'Column 7 of Form I',
+  'verification part',
+  'Signature portion (above & below verification)',
+];
+
 const DEFECTS = [
   {
     "code": "1",
@@ -253,4 +266,4 @@ function buildDefectCommunication(codes, customDefects) {
     .join('\n\n');
 }
 
-module.exports = { DEFECTS, getDefects, findDefect, buildDefectCommunication };
+module.exports = { DEFECTS, FORM_I_COLUMNS, getDefects, findDefect, buildDefectCommunication };

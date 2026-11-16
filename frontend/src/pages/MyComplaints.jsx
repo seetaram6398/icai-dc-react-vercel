@@ -10,7 +10,9 @@ function MyComplaints() {
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusIds, setStatusIds] = useState(searchParams.get('statusIds') || '');
+  const statusIds = searchParams.get('statusIds') || '';
+  const scope = searchParams.get('scope') || '';
+  const complainantOnly = scope === 'complainant';
   const ut = Number(user?.UserType);
   const isFirmUser = Number(user?.IsFirmUser) === 1;
   const isRespondent = ut === 2;
@@ -22,25 +24,29 @@ function MyComplaints() {
   useEffect(() => {
     const params = new URLSearchParams();
     if (statusIds) params.set('statusIds', statusIds);
-    if (!isRespondent) params.set('complainantId', user.UserID);
+    if (complainantOnly || !isRespondent) params.set('complainantId', user.UserID);
+    else params.set('respondentFor', user.Email);
+    setLoading(true);
     api
       .get(`/complaints?${params.toString()}`)
       .then((res) => setRows(res.data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [statusIds, user?.UserID, user?.Email, isRespondent]);
+  }, [statusIds, complainantOnly, user?.UserID, user?.Email, isRespondent]);
 
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-3">
         <div>
-          <h4 className="mb-0">{isRespondent ? 'My Cases' : 'My Complaints'}</h4>
+          <h4 className="mb-0">{statusIds === '3' ? 'Complaints with Defect' : isRespondent ? 'My Cases' : 'My Complaints'}</h4>
           <small className="text-muted">
-            {isFirmUser
-              ? 'Complaints filed against your firm'
-              : isRespondent
-                ? 'Complaints filed by you or where you are the respondent / answerable member'
-                : 'Complaints filed by you'}
+            {statusIds === '3'
+              ? 'Complaints returned to you for rectification of defects'
+              : isFirmUser
+                ? 'Complaints filed against your firm'
+                : isRespondent
+                  ? 'Complaints filed by you or where you are the respondent / answerable member'
+                  : 'Complaints filed by you'}
           </small>
         </div>
         {canFileComplaint && (

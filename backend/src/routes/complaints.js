@@ -25,7 +25,7 @@ const {
   AD_PARTIES,
 } = require('../services/complaintAccess');
 const { findPartyActionPendingIds } = require('../services/partyActions');
-const { getDefects, findDefect, buildDefectCommunication } = require('../services/defectCatalog');
+const { getDefects, findDefect, buildDefectCommunication, FORM_I_COLUMNS } = require('../services/defectCatalog');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -1099,7 +1099,7 @@ router.get('/lookup', async (req, res) => {
 // rectification action; the selected communication is copied into the status
 // remarks and each defect is stored separately on the complaint.
 router.get('/defect-catalog', (req, res) => {
-  res.json({ defects: getDefects() });
+  res.json({ defects: getDefects(), columns: FORM_I_COLUMNS });
 });
 
 router.get('/:id', async (req, res) => {
@@ -3016,9 +3016,9 @@ router.post('/:id/status', async (req, res) => {
       if (codes.length === 0 && otherDefects.length === 0) {
         return res.status(400).json({ error: 'Please select at least one defect.' });
       }
-      if (otherDefects.some((defect) => !defect.relevantColumn)) {
+      if (otherDefects.some((defect) => !FORM_I_COLUMNS.includes(defect.relevantColumn))) {
         return res.status(400).json({
-          error: 'Please specify the relevant column / input for the Other defect.',
+          error: 'Please select a valid Form I column for the Other defect.',
         });
       }
       selectedDefects = codes.map((code) => findDefect(code));
