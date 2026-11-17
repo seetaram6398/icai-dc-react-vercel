@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { statusText } from '../utils/statusText';
 import RichEditor from '../components/RichEditor';
 import { usePopups } from '../components/Popup';
+import { DefectRectificationCard } from './ComplaintDetail';
 import './Reports.css';
 
 function statusTone(name) {
@@ -56,6 +57,8 @@ function ComplaintList() {
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignSOId, setAssignSOId] = useState('');
   const [soMembers, setSoMembers] = useState([]);
+  const [defectComp, setDefectComp] = useState(null);
+  const [defectLoading, setDefectLoading] = useState(false);
   const popup = usePopups();
 
   useEffect(() => setDraft(statusIds), [statusIds]);
@@ -118,6 +121,20 @@ function ComplaintList() {
       return;
     }
     navigate(`/complaints/${c.CompID}`);
+  };
+
+  const openDefect = async (c) => {
+    setDefectComp(c);
+    setDefectLoading(true);
+    try {
+      const res = await api.get(`/complaints/${c.CompID}`);
+      setDefectComp(res.data);
+    } catch {
+      popup.error('Could not load the defect details.');
+      setDefectComp(null);
+    } finally {
+      setDefectLoading(false);
+    }
   };
 
   const exportCsv = async () => {
@@ -502,10 +519,10 @@ function ComplaintList() {
                               <button
                                 type="button"
                                 className="btn btn-sm btn-primary"
-                                onClick={() => navigate(`/file-complaint?edit=${c.CompID}`)}
-                                title="Defect communicated to you - edit your complaint"
+                                onClick={() => openDefect(c)}
+                                title="View the defect(s) communicated by the Scrutiny Officer and respond"
                               >
-                                <i className="bi bi-pencil" /> Rectify
+                                <i className="bi bi-list-check" /> Defect
                               </button>
                             )}
                           </div>
@@ -634,6 +651,50 @@ function ComplaintList() {
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {defectComp && (
+        <>
+          <div className="modal-backdrop show" onClick={() => setDefectComp(null)} />
+          <div
+            className="modal show d-block"
+            role="dialog"
+            tabIndex="-1"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setDefectComp(null); }}
+          >
+            <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">
+                    <i className="bi bi-list-check me-2" />
+                    Defect Rectification — {defectComp.CompNo}
+                  </h5>
+                  <button type="button" className="btn-close" onClick={() => setDefectComp(null)} aria-label="Close" />
+                </div>
+                <div className="modal-body">
+                  {defectLoading ? (
+                    <div className="text-center p-4">
+                      <div className="spinner-border text-primary" role="status">
+                        <span className="visually-hidden">Loading...</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <DefectRectificationCard
+                      compId={defectComp.CompID}
+                      c={defectComp}
+                      onRefresh={() => { openDefect(defectComp); applyFilter(statusIds); }}
+                      canEdit={Number(defectComp.StatusID) === 3}
+                      minimal
+                    />
+                  )}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-light" onClick={() => setDefectComp(null)}>Close</button>
+                </div>
               </div>
             </div>
           </div>

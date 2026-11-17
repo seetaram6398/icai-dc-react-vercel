@@ -1254,7 +1254,7 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
   );
 }
 
-function DefectRectificationCard({ compId, c, onRefresh, canEdit }) {
+export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal = false }) {
   const popup = usePopups();
   const defects = c.defects || [];
   const [rows, setRows] = useState({});
@@ -1337,12 +1337,14 @@ function DefectRectificationCard({ compId, c, onRefresh, canEdit }) {
         </span>
       </div>
       <div className="card-body">
-        <p className="small text-muted mb-3">
-          The Scrutiny Officer has returned the complaint for rectification of the following defects.
-          {canEdit
-            ? ' Add a supporting document and/or a remark against every defect and submit. The complaint returns to the SO only after all defects are answered.'
-            : ' The response submitted by the complainant is shown against each defect.'}
-        </p>
+        {!minimal && (
+          <p className="small text-muted mb-3">
+            The Scrutiny Officer has returned the complaint for rectification of the following defects.
+            {canEdit
+              ? ' Add a supporting document and/or a remark against every defect and submit. The complaint returns to the SO only after all defects are answered.'
+              : ' The response submitted by the complainant is shown against each defect.'}
+          </p>
+        )}
         <form onSubmit={submitResponses}>
           {defects.map((defect, index) => {
             const row = rows[defect.ComplaintDefectID] || {};
@@ -1353,13 +1355,19 @@ function DefectRectificationCard({ compId, c, onRefresh, canEdit }) {
                   <span className="badge-soft badge-soft-primary align-self-start">{index + 1}</span>
                   <div className="flex-grow-1">
                     <div className="fw-semibold">{defect.DefectText}</div>
-                    {defect.RelevantColumn && (
+                    {!minimal && defect.RelevantColumn && (
                       <div className="small text-muted mt-1">
                         <i className="bi bi-input-cursor-text me-1" />
                         Form I reference: {defect.RelevantColumn}
                       </div>
                     )}
-                    {defect.Communication && (
+                    {!minimal && canEdit && Array.isArray(defect.FieldTargets) && defect.FieldTargets.length > 0 && (
+                      <div className="small text-muted mt-1">
+                        <i className="bi bi-arrow-return-right me-1" />
+                        Your response will update: {defect.FieldTargets.join(', ')}
+                      </div>
+                    )}
+                    {!minimal && defect.Communication && (
                       <details className="mt-1">
                         <summary className="small text-primary" style={{ cursor: 'pointer' }}>
                           View communication sent by SO
@@ -1436,11 +1444,13 @@ function DefectRectificationCard({ compId, c, onRefresh, canEdit }) {
           })}
           {canEdit && (
             <>
-              <div className="alert alert-info small py-2">
-                <i className="bi bi-info-circle me-1" />
-                Every defect needs either a remark or a supporting document. Attachments added here are also
-                stored with the complaint documents.
-              </div>
+              {!minimal && (
+                <div className="alert alert-info small py-2">
+                  <i className="bi bi-info-circle me-1" />
+                  Every defect needs either a remark or a supporting document. Attachments added here are also
+                  stored with the complaint documents.
+                </div>
+              )}
               <button type="submit" className="btn btn-primary w-100" disabled={busy}>
                 {busy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}
                 <i className="bi bi-send me-1" />Submit Defect Responses
@@ -2250,6 +2260,14 @@ export default function ComplaintDetail() {
        popup.warning('Please select one of the option.');
        return;
      }
+     if (!soNatureOption) {
+       popup.warning('Please select the Nature of Allegation.');
+       return;
+     }
+     if (soNatureOption === 'Other' && !soNatureOther.trim()) {
+       popup.warning('Please enter the Nature details.');
+       return;
+     }
      const customDefects = soOtherDefect
        ? [{
            question: soCustomDefect.question.trim(),
@@ -2273,8 +2291,8 @@ export default function ComplaintDetail() {
        popup.warning('Please enter remarks.');
        return;
      }
-     if (!soMarkSimilar && !isFirstComplaint) {
-       popup.warning('Please select whether this complaint is similar to another complaint filed by a different member against the same member.');
+     if (!isFirstComplaint && !soMarkedSimilarFlag && soMarkSimilar !== 'no') {
+       popup.warning('Please mark a similar complaint or select No.');
        return;
      }
      if (soMarkSimilar === 'yes' && !soMarkedSimilarFlag) {
@@ -2969,17 +2987,6 @@ export default function ComplaintDetail() {
           >
             <i className="bi bi-arrow-clockwise" />
           </button>
-          {Number(c.UserID) === Number(user?.UserID) &&
-            [3, 4].includes(Number(c.StatusID)) &&
-            !hasPendingDefects && (
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() => navigate(`/file-complaint?edit=${id}`)}
-            >
-              <i className="bi bi-pencil me-1" />Edit Complaint
-            </button>
-          )}
           {c.defects?.length > 0 && (
             <button
               type="button"
@@ -3934,7 +3941,7 @@ export default function ComplaintDetail() {
                 <form onSubmit={submitSoAction}>
                   <div className="mb-3">
                     <label className="form-label small fw-semibold">
-                      Nature of allegation
+                      Nature of allegation <span className="text-danger">*</span>
                     </label>
                     <select
                       className="form-select"
@@ -3983,50 +3990,11 @@ export default function ComplaintDetail() {
                   </div>
                    {!isFirstComplaint && (
                    <div className="mb-3">
-                     <label className="form-label small fw-semibold">Is this complaint similar to another complaint filed by a different member against the same member?</label>
-                     <div className="radio-card-list">
-                       <label className="radio-card">
-                         <input
-                           className="form-check-input"
-                           type="radio"
-                           name="soMarkSimilarQuestion"
-                           id="soMarkSimilarYes"
-                           value="yes"
-                           checked={soMarkSimilar === 'yes'}
-                           onChange={(e) => {
-                             setSoMarkSimilar(e.target.value);
-                             loadSimilarCandidates();
-                             setSoMarkedSimilarFlag(false);
-                             setSoAction('');
-                           }}
-                         />
-                         <span className="radio-card-label">Yes</span>
-                       </label>
-                       <label className="radio-card">
-                         <input
-                           className="form-check-input"
-                           type="radio"
-                           name="soMarkSimilarQuestion"
-                           id="soMarkSimilarNo"
-                           value="no"
-                           checked={soMarkSimilar === 'no'}
-                           onChange={(e) => {
-                             setSoMarkSimilar(e.target.value);
-                             setSoMarkedSimilarFlag(false);
-                             setSoAction('');
-                             setSoSimilarCandidates([]);
-                             setSoSimilarLinked([]);
-                             setSoPrimarySimilar('');
-                             setSoSelectedPreviousComp('');
-                           }}
-                         />
-                         <span className="radio-card-label">No</span>
-                       </label>
-                     </div>
-                   </div>
-                   )}
+                      <label className="form-label small fw-semibold">Is this complaint similar to another complaint filed by a different member against the same member?</label>
+                    </div>
+                    )}
 
-                   {soMarkSimilar === 'yes' && !soMarkedSimilarFlag && (
+                   {!isFirstComplaint && soMarkSimilar !== 'no' && !soMarkedSimilarFlag && (
                      <div className="mb-3 p-3 border rounded bg-light">
                        <label className="form-label small fw-semibold">Select a complaint to mark similar with previous complaint <span className="text-danger">*</span></label>
                        {soSimilarLoading ? (
@@ -4084,9 +4052,32 @@ export default function ComplaintDetail() {
                      </div>
                    )}
 
-                   {soMarkedSimilarFlag && (
-                     <div className="mb-3">
-                       <label className="form-label small fw-semibold">Please select one of the option</label>
+                    {!isFirstComplaint && !soMarkedSimilarFlag && (
+                      <label className="radio-card mt-2 mb-3">
+                        <input
+                          className="form-check-input"
+                          type="radio"
+                          name="soMarkSimilarQuestion"
+                          id="soMarkSimilarNo"
+                          value="no"
+                          checked={soMarkSimilar === 'no'}
+                          onChange={(e) => {
+                            setSoMarkSimilar(e.target.value);
+                            setSoMarkedSimilarFlag(false);
+                            setSoAction('');
+                            setSoSimilarCandidates([]);
+                            setSoSimilarLinked([]);
+                            setSoPrimarySimilar('');
+                            setSoSelectedPreviousComp('');
+                          }}
+                        />
+                        <span className="radio-card-label">No</span>
+                      </label>
+                    )}
+
+                    {soMarkedSimilarFlag && (
+                      <div className="mb-3">
+                        <label className="form-label small fw-semibold">Please select one of the option</label>
                        <div className="radio-card-list mt-2">
                          <label className="radio-card">
                            <input
@@ -4216,9 +4207,9 @@ export default function ComplaintDetail() {
                              .filter((defect) => {
                                const q = soDefectSearch.trim().toLowerCase();
                                if (!q) return true;
-                               return `${defect.code} ${defect.label} ${defect.relevantColumn || ''}`
-                                 .toLowerCase()
-                                 .includes(q);
+                                return `${defect.code} ${defect.label} ${defect.relevantColumn || ''} ${(defect.fieldTargets || []).join(' ')}`
+                                  .toLowerCase()
+                                  .includes(q);
                              })
                              .map((defect) => {
                                const code = String(defect.code);
@@ -4238,16 +4229,18 @@ export default function ComplaintDetail() {
                                        )
                                      }
                                    />
-                                   <label className="form-check-label small" htmlFor={`soDefect${code}`}>
-                                     <span className="badge-soft badge-soft-neutral me-1">{code}</span>
-                                     {defect.label}
-                                     {defect.relevantColumn && (
-                                       <div className="text-muted mt-1">
-                                         <i className="bi bi-input-cursor-text me-1" />
-                                         Form I reference: {defect.relevantColumn}
-                                       </div>
-                                     )}
-                                   </label>
+                                    <label className="form-check-label small" htmlFor={`soDefect${code}`}>
+                                      <span className="badge-soft badge-soft-neutral me-1">{code}</span>
+                                      {defect.label}
+                                      {(defect.fieldTargets?.length || defect.relevantColumn) && (
+                                        <div className="text-muted mt-1">
+                                          <i className="bi bi-input-cursor-text me-1" />
+                                          Form I field: {defect.fieldTargets?.length
+                                            ? defect.fieldTargets.join(', ')
+                                            : defect.relevantColumn}
+                                        </div>
+                                      )}
+                                    </label>
                                  </div>
                                );
                              })}

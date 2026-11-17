@@ -11,6 +11,7 @@ import ComplaintDetail from './pages/ComplaintDetail';
 import ComplaintWithdrawalUpdate from './pages/ComplaintWithdrawalUpdate';
 import FileComplaint from './pages/FileComplaint';
 import MyComplaints from './pages/MyComplaints';
+import MyDefectResponses from './pages/MyDefectResponses';
 import AgendaList from './pages/AgendaList';
 import AgendaGenerate from './pages/AgendaGenerate';
 import HearingList from './pages/HearingList';
@@ -65,6 +66,7 @@ function App() {
         <Route path="complaints" element={<ComplaintList />} />
         <Route path="complaints/:id" element={<ComplaintDetail />} />
         <Route path="my-complaints" element={<MyComplaints />} />
+        <Route path="my-defect-responses" element={<MyDefectResponses />} />
         <Route path="withdrawal/update" element={<ComplaintWithdrawalUpdate />} />
         <Route path="file-complaint" element={<FileComplaint />} />
         <Route path="agenda" element={<AgendaList />} />

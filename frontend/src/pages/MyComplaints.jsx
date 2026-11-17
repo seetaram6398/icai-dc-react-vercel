@@ -90,15 +90,12 @@ function MyComplaints() {
                       </span>
                     </td>
                     <td className="text-end" onClick={(e) => e.stopPropagation()}>
-                      {Number(c.StatusID) === 3 && (
-                        <button
-                          className="btn btn-sm btn-primary"
-                          onClick={() => navigate(`/file-complaint?edit=${c.CompID}`)}
-                          title="Defect communicated to you - edit your complaint"
-                        >
-                          <i className="bi bi-pencil me-1"></i>Rectify
-                        </button>
-                      )}
+                      <button
+                        className="btn btn-sm btn-outline-primary"
+                        onClick={() => navigate(`/complaints/${c.CompID}`)}
+                      >
+                        <i className="bi bi-eye me-1"></i>View
+                      </button>
                     </td>
                   </tr>
                 ))}

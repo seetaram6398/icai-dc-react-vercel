@@ -24,6 +24,7 @@ const PAGE_LABELS = {
   '/bod-dashboard': 'BOD Dashboard',
   '/complaints': 'View Complaints',
   '/my-complaints': 'My Complaints',
+  '/my-defect-responses': 'My Defect Responses',
   '/withdrawal/update': 'Withdrawal of Complaint',
   '/file-complaint': 'File Complaint',
   '/agenda': 'Agenda',
@@ -277,6 +278,7 @@ export default function Layout() {
                   <>
                     {subLink('/complaints', ut === 11 ? 'All Complaints' : 'All')}
                     {ut === 3 && subLink('/complaints?statusIds=3', 'Complaint with Defect')}
+                    {ut === 3 && subLink('/my-defect-responses', 'My Defect Responses')}
                     {ut === 3 && subLink('/withdrawal/update', 'Withdrawal of Complaint')}
                     {DISPOSAL_STATUSES[ut] && subLink(`/complaints?statusIds=${DISPOSAL_STATUSES[ut]}`, 'Disposal')}
                   </>

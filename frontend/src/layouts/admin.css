@@ -487,6 +487,18 @@
   border-radius: var(--ds-radius) var(--ds-radius) 0 0;
 }
 
+/* Plain cards nested inside a ds-card keep their text left aligned - the flex
+   rule above would otherwise spread the icon and title to opposite ends. */
+.ds-card .card .card-header,
+.ds-card .card .card-body,
+.ds-card .card .form-label {
+  text-align: left;
+}
+
+.ds-card .card .card-header {
+  display: block;
+}
+
 .ds-card .card-title {
   font-size: 0.98rem;
   font-weight: 600;

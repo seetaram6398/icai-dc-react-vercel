@@ -26,6 +26,7 @@ const {
 } = require('../services/complaintAccess');
 const { findPartyActionPendingIds } = require('../services/partyActions');
 const { getDefects, findDefect, buildDefectCommunication, FORM_I_COLUMNS } = require('../services/defectCatalog');
+const { getDefectTargets, getDefectFieldLabels } = require('../services/defectFields');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -1099,7 +1100,33 @@ router.get('/lookup', async (req, res) => {
 // rectification action; the selected communication is copied into the status
 // remarks and each defect is stored separately on the complaint.
 router.get('/defect-catalog', (req, res) => {
-  res.json({ defects: getDefects(), columns: FORM_I_COLUMNS });
+  res.json({
+    defects: getDefects().map((d) => ({ ...d, fieldTargets: getDefectFieldLabels(d.code) })),
+    columns: FORM_I_COLUMNS,
+  });
+});
+
+// The defects the logged-in user has answered as a complainant - one row per
+// defect so they can see which value they submitted against which complaint.
+router.get('/my-defect-responses', async (req, res) => {
+  try {
+    const rows = await query(
+      `SELECT d.ComplaintDefectID, d.CompID, c.CompNo, c.ResName, c.StatusID,
+              sm.StatusName, d.DefectCode, d.DefectText, d.RelevantColumn,
+              d.ResponseRemark, d.ResponseAttachment, d.RespondedDate
+       FROM tbl_ComplaintDefect d
+       JOIN tbl_NewComplaint c ON c.CompID = d.CompID
+       LEFT JOIN tbl_StatusMaster sm ON c.StatusID = sm.StatusID
+       WHERE d.RespondedBy = @uid
+         AND (d.ResponseRemark IS NOT NULL OR d.ResponseAttachment IS NOT NULL)
+       ORDER BY d.RespondedDate DESC, d.ComplaintDefectID DESC`,
+      { uid: Number(req.user.UserID) }
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('my defect responses error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 router.get('/:id', async (req, res) => {
@@ -1152,11 +1179,15 @@ router.get('/:id', async (req, res) => {
         { id }
       );
       if (lastDefectStatus.length) {
-        defects = await query(
+        const defectRows = await query(
           `SELECT * FROM tbl_ComplaintDefect
            WHERE CompID=@id AND CompStatusID=@csid ORDER BY ComplaintDefectID`,
           { id, csid: Number(lastDefectStatus[0].CompStatusID) }
         );
+        defects = defectRows.map((defect) => ({
+          ...defect,
+          FieldTargets: getDefectFieldLabels(defect.DefectCode),
+        }));
       }
     } catch (defectErr) {
       console.error('load complaint defects error:', defectErr.message);
@@ -2803,6 +2834,14 @@ router.post('/:id/defects/respond', async (req, res) => {
     }
     const byId = new Map(bodyResponses.map((response) => [Number(response.complaintDefectId), response]));
     const submitted = [];
+    const fieldUpdates = {};
+
+    // Load the current Form I values once. Every defect response is audited
+    // individually with the "before" value of each field it overwrites (text or
+    // document), so the previous value always survives in tbl_AuditTrail.
+    const beforeRows = await query('SELECT * FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    const beforeRow = beforeRows[0] || {};
+    const runningValues = { ...beforeRow };
 
     for (const defect of defects) {
       const response = byId.get(Number(defect.ComplaintDefectID)) || {};
@@ -2847,10 +2886,93 @@ router.post('/:id/defects/respond', async (req, res) => {
         remark,
         attachment,
       });
+
+      // Map the answer to the Form I field(s) the defect refers to, recording
+      // the previous value of every field this response overwrites.
+      const targets = getDefectTargets(defect.DefectCode);
+      const oldFieldValues = {};
+      const newFieldValues = {};
+      if (targets) {
+        if (remark) (targets.texts || []).forEach((col) => {
+          oldFieldValues[col] = runningValues[col] ?? null;
+          newFieldValues[col] = remark;
+          fieldUpdates[col] = remark;
+          runningValues[col] = remark;
+        });
+        if (attachment) (targets.attachments || []).forEach((col) => {
+          oldFieldValues[col] = runningValues[col] ?? null;
+          newFieldValues[col] = attachment;
+          fieldUpdates[col] = attachment;
+          runningValues[col] = attachment;
+        });
+      }
+
+      // One audit row per defect response - mapped or not - so the defect code,
+      // the value the complainant submitted and the previous Form I value (if
+      // any) are all preserved in the database.
+      await writeAudit(req, {
+        compId: id,
+        compNo,
+        action: 'DEFECT_RESPONSE_RECORDED',
+        entity: 'COMPLAINT_DEFECT',
+        entityId: defect.ComplaintDefectID,
+        oldValues: {
+          DefectCode: defect.DefectCode,
+          Defect: defect.DefectText,
+          RelevantColumn: defect.RelevantColumn || null,
+          ...oldFieldValues,
+        },
+        newValues: {
+          remark: remark || null,
+          attachment: attachment || null,
+          ...newFieldValues,
+        },
+        details: targets
+          ? `Defect ${defect.DefectCode} response recorded; Form I field(s) updated: ${Object.keys(newFieldValues).join(', ') || 'none'}.`
+          : `Defect ${defect.DefectCode} response recorded (no Form I field mapped).`,
+      });
     }
 
     if (submitted.length === 0) {
       return res.status(400).json({ error: 'Please respond to at least one defect.' });
+    }
+
+    // Write the corrected values back onto Form I. History is preserved in the
+    // audit trail; a failed write must not lose the saved defect responses.
+    if (Object.keys(fieldUpdates).length) {
+      try {
+        const cols = Object.keys(fieldUpdates);
+        const oldValues = {};
+        const newValues = {};
+        const updatedCols = [];
+        for (const col of cols) {
+          try {
+            await executeNonQuery(`UPDATE tbl_NewComplaint SET ${col}=@value WHERE CompID=@id`, {
+              id,
+              value: fieldUpdates[col],
+            });
+            oldValues[col] = beforeRow[col] ?? null;
+            newValues[col] = fieldUpdates[col];
+            updatedCols.push(col);
+          } catch (colErr) {
+            console.error(`defect response field mapping failed for ${col}:`, colErr.message);
+          }
+        }
+        if (updatedCols.length) {
+          await writeAudit(req, {
+            compId: id,
+            compNo,
+            action: 'DEFECT_RESPONSE_MAPPED',
+            entity: 'COMPLAINT',
+            entityId: id,
+            oldValues,
+            newValues,
+            details: `Complainant's defect response written back to Form I field(s): ${updatedCols.join(', ')}.`,
+          });
+        }
+      } catch (mapErr) {
+        console.error('defect response field mapping error:', mapErr.message);
+      }
     }
 
     const pendingRows = await query(
