@@ -110,6 +110,26 @@ async function buildComplaintPdf(id, opts) {
     );
   }
 
+  // Rule 5(5) defects communicated by the SO and the complainant's rectification.
+  // Only the latest defect cycle is shown on the form; older cycles stay on
+  // record in tbl_ComplaintDefect and are never deleted.
+  let defects = [];
+  try {
+    const latestDefectCycle = await query(
+      'SELECT TOP 1 CompStatusID FROM tbl_ComplaintDefect WHERE CompID=@id ORDER BY CompStatusID DESC',
+      { id }
+    );
+    if (latestDefectCycle.length) {
+      defects = await query(
+        `SELECT * FROM tbl_ComplaintDefect
+         WHERE CompID=@id AND CompStatusID=@csid ORDER BY ComplaintDefectID`,
+        { id, csid: Number(latestDefectCycle[0].CompStatusID) }
+      );
+    }
+  } catch (defectErr) {
+    console.error('load complaint defects for pdf error:', defectErr.message);
+  }
+
   // Attachments appended after the form. Each one carries the caption of the
   // section it came from, so the merged PDF shows a meaningful title on every
   // appended page instead of the raw uploaded file name.
@@ -540,6 +560,50 @@ async function buildComplaintPdf(id, opts) {
   // Render the Form A template
   // ======================================================================
   renderRows([...formRowsStart, ...formRowsBody]);
+
+  // ---------- Defects (Rule 5(5)) + complainant's rectification ----------
+  // Placed against the relevant Form I column so the latest defect cycle and the
+  // complainant's response travel with the complaint form.
+  if (defects.length) {
+    const dWidths = [CW * 0.05, CW * 0.19, CW * 0.31, CW * 0.32, CW * 0.13];
+    const defectRows = [
+      {
+        cells: [tcell(CW, 'Defects communicated under Rule 5(5) and rectification submitted by the Complainant', { bold: true, align: 'c', size: 9.5 })],
+      },
+      {
+        cells: dWidths.map((w, i) =>
+          tcell(w, ['S.No', 'Relevant Column of Form I', 'Defect', "Complainant's Response", 'Attachment'][i], { bold: true, size: 8 })
+        ),
+      },
+    ];
+    defects.forEach((d, i) => {
+      const communication = String(d.Communication || '').trim();
+      const defectText = [String(d.DefectText || '').trim(), communication ? `\nCommunication: ${communication}` : '']
+        .filter(Boolean)
+        .join('');
+      const responseText = [
+        String(d.ResponseRemark || '').trim(),
+        d.RespondedDate ? `Responded on ${fmtD(d.RespondedDate)}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n') || '—';
+      const attachment = d.ResponseAttachment
+        ? String(d.ResponseAttachment).split(/[\\/]/).pop()
+        : '—';
+      defectRows.push({
+        cells: [
+          tcell(dWidths[0], String(i + 1)),
+          tcell(dWidths[1], String(d.RelevantColumn || '—'), { size: 7.5 }),
+          tcell(dWidths[2], defectText || '—', { size: 7.5 }),
+          tcell(dWidths[3], responseText, { size: 7.5 }),
+          tcell(dWidths[4], attachment, { size: 7.5 }),
+        ],
+      });
+    });
+    ensureSpace(24);
+    y -= 10;
+    renderRows(defectRows);
+  }
 
   // ---------- Status history (compilation) ----------
   if (includeHistory) {
