@@ -11,7 +11,6 @@ const router = express.Router();
 // Define upload destination mapping for document types
 const UPLOAD_DIRS = {
   aadhar: 'Aadhar',
-  photo: 'ComplaintantPhoto',
   signature: 'ComplaintantSignature',
   brief: 'Brief',
   misconduct: 'Misconduct',

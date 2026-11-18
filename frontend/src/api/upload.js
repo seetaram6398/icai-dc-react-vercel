@@ -3,7 +3,6 @@ import api from './client';
 // Must stay in sync with UPLOAD_DIRS in backend/src/routes/upload.js
 const UPLOAD_DIRS = {
   aadhar: 'Aadhar',
-  photo: 'ComplaintantPhoto',
   signature: 'ComplaintantSignature',
   brief: 'Brief',
   misconduct: 'Misconduct',

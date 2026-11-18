@@ -129,7 +129,7 @@ The sidebar shows only the menus allowed for your role.
 ## 5. Files & Uploads
 
 - Uploads are saved under `icai-dc-react/Documents/<Type>/` and served at `/documents`.
-- Folder mapping: `brief` → `Brief`, `photo` → `ComplaintantPhoto`, `aadhar` → `Aadhar`, `audiovideo` → `AudioVideo`, etc.
+- Folder mapping: `brief` → `Brief`, `aadhar` → `Aadhar`, `signature` → `ComplaintantSignature`, `audiovideo` → `AudioVideo`, etc.
 
 ---
 

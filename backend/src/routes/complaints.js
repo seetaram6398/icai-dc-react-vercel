@@ -666,8 +666,8 @@ async function buildDownloadDoc(id, kind, origin) {
     fr([fc('STD Code', val(c.STDCode)), fc('Landline No', val(c.LandlineNo)), fc('', '')]) +
     fr([fc('Flat, House no., Building, Company, Apartment', val(c.Address)), fc('Area, Street, Sector, Village', val(c.Area)), fc('Landmark', val(c.Landmark))]) +
     fr([fc('State', val(c.ComplainantStateName)), fc('City', val(c.ComplainantCityName)), fc('Pincode', val(c.PinCode))]) +
-    fr([fc('Region', val(c.Region)), fc('Aadhar/PAN/Employee-ID No.', val(c.AadharNo)), fc('', '')]) +
-    fr([fc(imgCell(c.AadharPhoto, 'Complainant Aadhar/PAN/Employee-ID Photo')), fc(imgCell(c.ComplaintantPhoto, 'Complainant Photo')), fc(imgCell(c.ComplaintantSignature, 'Complainant Signature'))])
+    fr([fc('Region', val(c.Region)), fc(({ PAN: 'PAN No.', AADHAAR: 'Aadhaar No.', VOTER_ID: 'Voter ID No.', PASSPORT: 'Passport No.', DRIVING_LICENCE: 'Driving Licence No.', OTHER: 'Identity No.' }[c.IdentityType] || 'Identity No.'), val(c.AadharNo)), fc('', '')]) +
+    fr([fc(imgCell(c.AadharPhoto, (({ PAN: 'PAN Card', AADHAAR: 'Aadhaar Card', VOTER_ID: 'Voter ID Card', PASSPORT: 'Passport', DRIVING_LICENCE: 'Driving Licence', OTHER: 'Identity Proof' }[c.IdentityType] || 'Identity Proof') + ' Photo'))), fc(imgCell(c.ComplaintantSignature, 'Complainant Signature')), fc('')])
   );
 
   const secII = section(
@@ -1286,7 +1286,6 @@ router.get('/:id', async (req, res) => {
       delete complaintPayload.MisconductAttachment;
       delete complaintPayload.RegulatorAttachment;
       delete complaintPayload.AadharPhoto;
-      delete complaintPayload.ComplaintantPhoto;
       delete complaintPayload.ComplaintantSignature;
       delete complaintPayload.ScrutinySheet;
       delete complaintPayload.AadharNo;
@@ -2321,7 +2320,7 @@ router.put('/:id', async (req, res) => {
          MobileNo=@mobile, STDCode=@stdCode, LandlineNo=@landlineNo,
          Address=@address, Area=@area, Landmark=@landmark, AadharNo=@aadharNo,
          CompMembershipNo=@compMembershipNo,
-         AadharPhoto=@aadharPhoto, ComplaintantPhoto=@photo, ComplaintantSignature=@signature,
+         AadharPhoto=@aadharPhoto, ComplaintantSignature=@signature, IdentityType=@identityType,
          ResName=@resName, ResRegistrationNo=@resReg, ResCountryCode=@resCountry,
          ResMobileNo=@resMobile, ResSTDCode=@resStd, ResLandlineNo=@resLandline,
          ResProfAddress=@resProfAddr, ResCommAddress=@resCommAddr, ResEmailID=@resEmail,
@@ -2362,8 +2361,8 @@ router.put('/:id', async (req, res) => {
         aadharNo: b.aadharNo ?? cur.AadharNo ?? null,
         compMembershipNo: b.compMembershipNo ?? cur.CompMembershipNo ?? null,
         aadharPhoto: b.aadharPhoto ?? cur.AadharPhoto ?? null,
-        photo: b.complaintantPhoto ?? cur.ComplaintantPhoto ?? null,
         signature: b.complaintantSignature ?? cur.ComplaintantSignature ?? null,
+        identityType: b.identityType ?? cur.IdentityType ?? null,
         resName: b.resName ?? cur.ResName ?? null,
         resReg: b.isFirm ? null : b.resRegistrationNo || cur.ResRegistrationNo || null,
         resCountry: b.resCountryCode || cur.ResCountryCode || '91',
@@ -3554,7 +3553,6 @@ router.post('/', async (req, res) => {
         AadharNo: b.aadharNo || null,
         CompMembershipNo: b.compMembershipNo || null,
         AadharPhoto: b.aadharPhoto || null,
-        ComplaintantPhoto: b.complaintantPhoto || null,
         ComplaintantSignature: b.complaintantSignature || null,
         Region: b.complainantRegion || null,
       }];
@@ -3629,7 +3627,7 @@ router.post('/', async (req, res) => {
     const result = await query(
       `INSERT INTO tbl_NewComplaint
         (ComplaintNo, CompType, Name, EmailID, CountryCode, MobileNo, STDCode, LandlineNo,
-         Address, Area, Landmark, AadharNo, CompMembershipNo, AadharPhoto, ComplaintantPhoto, ComplaintantSignature,
+         Address, Area, Landmark, AadharNo, CompMembershipNo, AadharPhoto, ComplaintantSignature, IdentityType,
          ResName, ResRegistrationNo, ResCountryCode, ResMobileNo, ResSTDCode, ResLandlineNo,
          ResProfAddress, ResCommAddress, ResEmailID,
          BriefStatement, BriefAttachment, ParticularMisconduct, MisconductAttachment,
@@ -3651,7 +3649,7 @@ router.post('/', async (req, res) => {
        OUTPUT INSERTED.CompID
        VALUES
         (@complaintNo, @compType, @name, @email, @countryCode, @mobile, @stdCode, @landlineNo,
-         @address, @area, @landmark, @aadharNo, @compMembershipNo, @aadharPhoto, @photo, @signature,
+         @address, @area, @landmark, @aadharNo, @compMembershipNo, @aadharPhoto, @signature, @identityType,
          @resName, @resReg, @resCountry, @resMobile, @resStd, @resLandline,
          @resProfAddr, @resCommAddr, @resEmail,
          @brief, @briefAttach, @misconduct, @misconductAttach,
@@ -3685,8 +3683,8 @@ router.post('/', async (req, res) => {
         aadharNo: b.aadharNo || null,
         compMembershipNo: b.compMembershipNo || null,
         aadharPhoto: b.aadharPhoto || null,
-        photo: b.complaintantPhoto || null,
         signature: b.complaintantSignature || null,
+        identityType: b.identityType || null,
         resName: b.resName || null,
         resReg: b.isFirm ? null : b.resRegistrationNo || null,
         resCountry: b.resCountryCode || '91',

@@ -173,8 +173,7 @@ async function buildComplaintPdf(id, opts) {
       return null;
     }
   };
-  const [photoImg, aadharImg, signImg] = await Promise.all([
-    readImage(c.ComplaintantPhoto, 'photo'),
+  const [aadharImg, signImg] = await Promise.all([
     readImage(c.AadharPhoto, 'aadhar'),
     readImage(c.ComplaintantSignature, 'sign'),
   ]);
@@ -427,7 +426,7 @@ async function buildComplaintPdf(id, opts) {
     { cells: [
       tcell(COLS[0], '(f)(*)'),
       tcell(COLS[1], 'Photo Identity & Address Proof (along with ID number)\n(Please attach a self-attested copy of either of Aadhar card or Voter ID card or Passport or any document issued by Central or State Government)'),
-      icell(COLS[2], [photoImg, aadharImg], 96, 100),
+      icell(COLS[2], [aadharImg], 96, 100),
     ]},
 
     // 2. Particulars of the Respondent

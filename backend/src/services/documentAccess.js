@@ -165,19 +165,17 @@ async function checkDocumentAccess(user, relPath) {
   // 4. The attachments carried on the complaint row itself.
   const complaintRow = await query(
     `SELECT TOP 1 CompID, BriefAttachment, MisconductAttachment, RegulatorAttachment,
-            AadharPhoto, ComplaintantPhoto, ComplaintantSignature
+            AadharPhoto, ComplaintantSignature
      FROM tbl_NewComplaint
      WHERE LOWER(ISNULL(BriefAttachment,'')) = @name
         OR LOWER(ISNULL(MisconductAttachment,'')) = @name
         OR LOWER(ISNULL(RegulatorAttachment,'')) = @name
         OR LOWER(ISNULL(AadharPhoto,'')) = @name
-        OR LOWER(ISNULL(ComplaintantPhoto,'')) = @name
         OR LOWER(ISNULL(ComplaintantSignature,'')) = @name
         OR LOWER(ISNULL(BriefAttachment,'')) LIKE '%/' + @name
         OR LOWER(ISNULL(MisconductAttachment,'')) LIKE '%/' + @name
         OR LOWER(ISNULL(RegulatorAttachment,'')) LIKE '%/' + @name
         OR LOWER(ISNULL(AadharPhoto,'')) LIKE '%/' + @name
-        OR LOWER(ISNULL(ComplaintantPhoto,'')) LIKE '%/' + @name
         OR LOWER(ISNULL(ComplaintantSignature,'')) LIKE '%/' + @name`,
     { name }
   );

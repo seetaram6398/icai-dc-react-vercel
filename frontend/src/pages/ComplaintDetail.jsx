@@ -2846,9 +2846,12 @@ export default function ComplaintDetail() {
   // Files uploaded with the complaint itself. They are shown to the internal
   // staff (SO, DD, Admin, ...) so every input filed by the complainant is
   // reachable directly from the complaint detail page.
+  const identityProofLabel = (() => {
+    const map = { PAN: 'PAN Card', AADHAAR: 'Aadhaar Card', VOTER_ID: 'Voter ID Card', PASSPORT: 'Passport', DRIVING_LICENCE: 'Driving Licence', OTHER: 'Government ID' };
+    return map[c.IdentityType] || (c.AadharNo ? 'PAN Card' : 'Identity Proof');
+  })();
   const complaintAttachments = [
-    ['AadharPhoto', 'PAN No. Photo'],
-    ['ComplaintantPhoto', 'Complainant Photo'],
+    ['AadharPhoto', `${identityProofLabel} Photo`],
     ['ComplaintantSignature', 'Complainant Signature'],
     ['RegulatorAttachment', 'Authorization Letter'],
     ['InvestigatingReport', 'Investigation Report'],
@@ -3421,7 +3424,8 @@ export default function ComplaintDetail() {
                 <DetailRow label="STD / Landline" value={[c.STDCode, c.LandlineNo].filter(Boolean).join(' / ')} />
                 <DetailRow label="S/D/O" value={c.Salutation} />
                 <DetailRow label="Relation Name" value={c.RelationName} />
-                <DetailRow label="PAN No." value={c.AadharNo} />
+                <DetailRow label="Identity Type" value={identityProofLabel} />
+                <DetailRow label="Identity Number" value={c.AadharNo} />
                 <DetailRow
                   label="Address"
                   value={[c.Address, c.Area, c.Landmark].filter(Boolean).join(', ')}
@@ -3952,7 +3956,18 @@ export default function ComplaintDetail() {
                       }}
                     >
                       <option value="">--Select--</option>
-                      <option value="Other">Other</option>
+                      <option value="Violation of Accounting and/or Auditing Standards">Violation of Accounting and/or Auditing Standards</option>
+                      <option value="Violation of provisions of Companies Act, 2013">Violation of provisions of Companies Act, 2013</option>
+                      <option value="Wrong Certification including wrong declaration in various forms uploaded with ROC,etc.">Wrong Certification including wrong declaration in various forms uploaded with ROC,etc.</option>
+                      <option value="Violation of ICAI’s Guidelines">Violation of ICAI’s Guidelines</option>
+                      <option value="Disputes regarding Audit of Trust / Societies">Disputes regarding Audit of Trust / Societies</option>
+                      <option value="Colluding in fraud with Management / others">Colluding in fraud with Management / others</option>
+                      <option value="Personal disputes">Personal disputes</option>
+                      <option value="Non-reporting in Audit Report">Non-reporting in Audit Report</option>
+                      <option value="Non Communication with previous auditor">Non Communication with previous auditor</option>
+                      <option value="Non payment of audit fee of previous auditor">Non payment of audit fee of previous auditor</option>
+                      <option value="Disputes under Negotiable Instruments Act">Disputes under Negotiable Instruments Act</option>
+                      <option value="Other">Others</option>
                     </select>
                   </div>
                   {soNatureOption === 'Other' && (
@@ -3965,18 +3980,6 @@ export default function ComplaintDetail() {
                       />
                     </div>
                   )}
-                  <div className="mb-3">
-                    <label className="form-label small fw-semibold">
-                      {soAction === 'defect' ? 'Communication / Remarks' : 'Remarks'}{' '}
-                      <span className="text-danger">*</span>
-                    </label>
-                    {soAction === 'defect' && (
-                      <div className="form-text mb-1">
-                        The selected defect communications are filled in automatically. You can edit the text before sending.
-                      </div>
-                    )}
-                    <RichEditor value={soRemarks} onChange={setSoRemarks} required />
-                  </div>
                   <div className="mb-3">
                     <label className="form-label small fw-semibold">
                       {soAction === 'defect' ? 'Supporting document (optional, PDF, max 20 MB)' : 'Attachment (PDF, max 20 MB)'}
@@ -4420,6 +4423,18 @@ export default function ComplaintDetail() {
                       </select>
                     </div>
                   )}
+                  <div className="mb-3">
+                    <label className="form-label small fw-semibold">
+                      {soAction === 'defect' ? 'Communication / Remarks' : 'Remarks'}{' '}
+                      <span className="text-danger">*</span>
+                    </label>
+                    {soAction === 'defect' && (
+                      <div className="form-text mb-1">
+                        The selected defect communications are filled in automatically. You can edit the text before sending.
+                      </div>
+                    )}
+                    <RichEditor value={soRemarks} onChange={setSoRemarks} required />
+                  </div>
                   <button type="submit" className="btn btn-primary w-100" disabled={soBusy}>
                     {soBusy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}
                     <i className="bi bi-send me-1" />Submit

@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePopups } from '../components/Popup';
 import {
   isValidEmail, sanitizeDigits, isValidMobile, isValidPincode, isValidStdCode,
-  isValidLandline, isValidPan, isValidGstin,
+  isValidLandline, isValidPan, isValidAadhaar, isValidGstin,
   sanitizeAlphaNumUpper, sanitizeUpper, isValidName, isValidFirmName,
   isFutureDate, isDateRangeOk,
 } from '../utils/validators';
@@ -15,6 +15,39 @@ import './Reports.css';
 
 const CCODES = ['91', '1', '44', '61', '971', '966', '65', '977', '880', '94', '92'];
 const GOV_COMP_TYPE_LABELS = ['Central Goverment', 'State Goverment', 'Regulatory Agency'];
+const IDENTITY_TYPES = [
+  { value: 'PAN', label: 'PAN Card' },
+  { value: 'AADHAAR', label: 'Aadhaar Card' },
+  { value: 'VOTER_ID', label: 'Voter ID Card' },
+  { value: 'PASSPORT', label: 'Passport' },
+  { value: 'DRIVING_LICENCE', label: 'Driving Licence' },
+  { value: 'OTHER', label: 'Other Government ID' },
+];
+
+function identityTypeLabel(type) {
+  return IDENTITY_TYPES.find((t) => t.value === type)?.label || 'Identity Proof';
+}
+
+function validateIdentityNumber(type, value) {
+  const v = String(value || '').trim();
+  if (!v) return 'Please enter Identity Number';
+  if (type === 'PAN') {
+    return isValidPan(v) ? null : 'Please enter a valid PAN No (e.g., AAAPA1234A)';
+  }
+  if (type === 'AADHAAR') {
+    return isValidAadhaar(v) ? null : 'Please enter a valid 12-digit Aadhaar No';
+  }
+  if (type === 'VOTER_ID') {
+    return /^[A-Za-z0-9]{6,20}$/.test(v.toUpperCase()) ? null : 'Please enter a valid Voter ID No';
+  }
+  if (type === 'PASSPORT') {
+    return /^[A-Za-z0-9]{6,12}$/.test(v.toUpperCase()) ? null : 'Please enter a valid Passport No';
+  }
+  if (type === 'DRIVING_LICENCE') {
+    return /^[A-Za-z0-9\-\/]{6,20}$/.test(v.toUpperCase()) ? null : 'Please enter a valid Driving Licence No';
+  }
+  return /^[A-Za-z0-9\-\/ ]{4,30}$/.test(v) ? null : 'Please enter a valid Identity Number';
+}
 
 const emptyForm = {
   compTypeId: '',
@@ -22,7 +55,8 @@ const emptyForm = {
   name: '', email: '', countryCode: '91', mobile: '', stdCode: '', landlineNo: '',
   address: '', area: '', landmark: '', stateId: '', cityId: '', pincode: '', aadharNo: '',
   compMembershipNo: '',
-  aadharPhoto: '', complaintantPhoto: '', complaintantSignature: '', complainantRegion: '',
+  aadharPhoto: '', complaintantSignature: '', complainantRegion: '',
+  identityType: '',
   salutation: '', relationName: '',
   isFirm: false, firmNo: '', nameOfFirm: '', firmProfAddress: '', firmCommAddress: '',
   firmProfStateId: '', firmProfCityId: '',
@@ -333,7 +367,7 @@ export default function FileComplaint() {
           stdCode: user.STDCode || '',
           landlineNo: user.LandlineNo || '',
           aadharPhoto: user.AadharPhoto || '',
-          complaintantPhoto: user.ComplaintantPhoto || '',
+          identityType: user.IdentityType || (user.AadharNo ? 'PAN' : ''),
           complaintantSignature: user.ComplaintantSignature || '',
           regulatorName: user.NameOfOffice || '',
           regulatorDesignation: user.RegulatorDesignation || '',
@@ -440,7 +474,7 @@ export default function FileComplaint() {
           aadharNo: d.AadharNo || '',
           compMembershipNo: d.CompMembershipNo || '',
           aadharPhoto: d.AadharPhoto || '',
-          complaintantPhoto: d.ComplaintantPhoto || '',
+          identityType: d.IdentityType || (d.AadharNo ? 'PAN' : ''),
           complaintantSignature: d.ComplaintantSignature || '',
           complainantRegion: regionForState(stateObj?.label, d.Region || stateObj?.Region || stateObj?.region),
           salutation: d.Salutation || '',
@@ -865,11 +899,10 @@ export default function FileComplaint() {
     if (!form.stateId) return 'Please select State';
     if (!form.cityId) return 'Please select City';
     if (!isValidPincode(form.pincode)) return 'Please enter valid 6-digit Pincode';
-    const pan = String(form.aadharNo || '').trim().toUpperCase();
-    if (!pan) return 'Please enter PAN No';
-    if (!isValidPan(pan)) return 'Please enter a valid PAN No (e.g., AAAPA1234A — 4th letter P for individuals)';
-    if (!form.aadharPhoto) return 'Please upload Complainant PAN No. Photo';
-    if (!form.complaintantPhoto) return 'Please upload Complainant Photo';
+    if (!form.identityType) return 'Please select Identity Type';
+    const identityErr = validateIdentityNumber(form.identityType, form.aadharNo);
+    if (identityErr) return identityErr;
+    if (!form.aadharPhoto) return `Please upload ${identityTypeLabel(form.identityType)} Photo`;
     if (!form.complaintantSignature) return 'Please upload Complainant Signature';
 
     if (form.resType === 'member') {
@@ -957,7 +990,8 @@ export default function FileComplaint() {
         ...form,
         name: T(form.name), email: T(form.email),
         address: T(form.address), area: T(form.area), landmark: T(form.landmark),
-        pincode: T(form.pincode), aadharNo: T(form.aadharNo).toUpperCase(),
+        pincode: T(form.pincode),         aadharNo: T(form.aadharNo).toUpperCase(),
+        identityType: form.identityType || null,
         compMembershipNo: T(form.compMembershipNo).toUpperCase(),
         nameOfFirm: T(form.nameOfFirm), firmNo: T(form.firmNo).toUpperCase(),
         resName: T(form.resName), resRegistrationNo: T(form.resRegistrationNo).toUpperCase(),
@@ -1190,18 +1224,38 @@ export default function FileComplaint() {
               <input className="form-control" value={form.complainantRegion || ''} readOnly />
             </div>
             <div className="col-md-4">
-              <label className="form-label">PAN No. *</label>
-              <input className="form-control" maxLength={10} value={form.aadharNo} onChange={set('aadharNo')} placeholder="AAAPA1234A" title="PAN: 3 letters, holder-type letter (P=Individual, F=Firm, C=Company), name letter, 4 digits, 1 letter" />
+              <label className="form-label">Identity Type *</label>
+              <select className="form-select" value={form.identityType} onChange={set('identityType')}>
+                <option value="">-- Select Identity --</option>
+                {IDENTITY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
             </div>
             <div className="col-md-4">
-              <FileUploadInput label="Upload Complainant PAN No. Photo" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
-                accept=".png,.jpg,.jpeg" sizeMB={0.5} required preview type="aadhar"
-                current={form.aadharPhoto} onUpload={(path) => setForm({ ...form, aadharPhoto: path })} />
+              <label className="form-label">Identity Number *</label>
+              <input
+                className="form-control"
+                maxLength={30}
+                value={form.aadharNo}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  const v = form.identityType === 'PAN' ? sanitizeAlphaNumUpper(raw, 10) : raw.toUpperCase().replace(/[^A-Z0-9\-\/ ]/g, '').slice(0, 30);
+                  setForm({ ...form, aadharNo: v });
+                }}
+                placeholder={form.identityType === 'PAN' ? 'AAAPA1234A' : form.identityType === 'AADHAAR' ? '12-digit Aadhaar No' : 'Enter identity number'}
+              />
             </div>
             <div className="col-md-4">
-              <FileUploadInput label="Upload Complainant Photo" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
-                accept=".png,.jpg,.jpeg" sizeMB={0.5} required preview type="photo"
-                current={form.complaintantPhoto} onUpload={(path) => setForm({ ...form, complaintantPhoto: path })} />
+              <FileUploadInput
+                label={`Upload ${identityTypeLabel(form.identityType)} Photo`}
+                hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
+                accept=".png,.jpg,.jpeg"
+                sizeMB={0.5}
+                required
+                preview
+                type="aadhar"
+                current={form.aadharPhoto}
+                onUpload={(path) => setForm({ ...form, aadharPhoto: path })}
+              />
             </div>
           </div>
         </div>
