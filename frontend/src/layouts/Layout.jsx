@@ -37,6 +37,8 @@ const PAGE_LABELS = {
   '/reports/stage': 'Stage Wise Bifurcation',
   '/reports/complaint-status': 'MIS Reports',
   '/reports/payment-details': 'Payment Details',
+  '/payment': 'Pay Complaint Fee',
+  '/payment/status': 'Payment Status',
   '/reports/member-complaint-status': 'My Complaint Status',
   '/reports/member-ageing': 'My Complaint Ageing',
   '/decision': 'Mark Decision',
@@ -257,6 +259,8 @@ export default function Layout() {
           )}
 
           {ut === 3 && link('/file-complaint?type=I', fileComplaintLabel, 'plus-square')}
+
+          {!isFirmUser && [1, 2, 3].includes(ut) && link('/payment', 'Pay Complaint Fee', 'credit-card')}
 
           {ut !== 4 && (
             <>

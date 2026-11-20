@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { usePopups } from '../components/Popup';
 import { statusText } from '../utils/statusText';
 
 function fileIcon(url = '') {
@@ -18,8 +19,25 @@ function fmtDate(v) {
 
 function MyDefectResponses() {
   const navigate = useNavigate();
+  const popup = usePopups();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const downloadDefectSheet = async (compId, compNo) => {
+    try {
+      const res = await api.get(`/complaints/${compId}/defect-sheet/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DefectSheet_${String(compNo || compId).replace(/[\\/]/g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      popup.error('Defect sheet download failed. Please try again.');
+    }
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -62,6 +80,7 @@ function MyDefectResponses() {
                     <th>Your response</th>
                     <th>Document</th>
                     <th>Responded on</th>
+                    <th>Defect Sheet</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -81,7 +100,7 @@ function MyDefectResponses() {
                         <div className="small">{r.DefectText}</div>
                         {r.RelevantColumn ? <div className="small text-muted">{r.RelevantColumn}</div> : null}
                       </td>
-                      <td style={{ whiteSpace: 'pre-wrap' }}>{r.ResponseRemark || '—'}</td>
+                      <td style={{ whiteSpace: 'pre-wrap' }}>{r.ResponseRemark || (r.RespondedDate ? 'Form I details updated' : '—')}</td>
                       <td>
                         {r.ResponseAttachment ? (
                           <a
@@ -96,6 +115,15 @@ function MyDefectResponses() {
                         ) : '—'}
                       </td>
                       <td className="text-muted col-num">{fmtDate(r.RespondedDate)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => downloadDefectSheet(r.CompID, r.CompNo)}
+                        >
+                          <i className="bi bi-file-earmark-arrow-down me-1" />Download
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

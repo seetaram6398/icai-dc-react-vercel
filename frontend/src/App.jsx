@@ -20,6 +20,8 @@ import ReportsAgeing from './pages/ReportsAgeing';
 import ReportsStage from './pages/ReportsStage';
 import ReportsComplaintStatus from './pages/ReportsComplaintStatus';
 import PaymentDetails from './pages/PaymentDetails';
+import Payment from './pages/Payment';
+import PaymentStatus from './pages/PaymentStatus';
 import ReportsMemberStatus from './pages/ReportsMemberStatus';
 import ReportsMemberAgeing from './pages/ReportsMemberAgeing';
 import BoardManagement from './pages/BoardManagement';
@@ -77,6 +79,8 @@ function App() {
         <Route path="reports/stage" element={<ReportsStage />} />
         <Route path="reports/complaint-status" element={<ReportsComplaintStatus />} />
         <Route path="reports/payment-details" element={<PaymentDetails />} />
+        <Route path="payment" element={<Payment />} />
+        <Route path="payment/status" element={<PaymentStatus />} />
         <Route path="reports/member-complaint-status" element={<ReportsMemberStatus />} />
         <Route path="reports/member-ageing" element={<ReportsMemberAgeing />} />
         <Route path="boards" element={<BoardManagement />} />

@@ -6,7 +6,6 @@ import { useAuth } from '../context/AuthContext';
 import { statusText } from '../utils/statusText';
 import RichEditor from '../components/RichEditor';
 import { usePopups } from '../components/Popup';
-import { DefectRectificationCard } from './ComplaintDetail';
 import './Reports.css';
 
 function statusTone(name) {
@@ -57,8 +56,6 @@ function ComplaintList() {
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignSOId, setAssignSOId] = useState('');
   const [soMembers, setSoMembers] = useState([]);
-  const [defectComp, setDefectComp] = useState(null);
-  const [defectLoading, setDefectLoading] = useState(false);
   const popup = usePopups();
 
   useEffect(() => setDraft(statusIds), [statusIds]);
@@ -121,20 +118,6 @@ function ComplaintList() {
       return;
     }
     navigate(`/complaints/${c.CompID}`);
-  };
-
-  const openDefect = async (c) => {
-    setDefectComp(c);
-    setDefectLoading(true);
-    try {
-      const res = await api.get(`/complaints/${c.CompID}`);
-      setDefectComp(res.data);
-    } catch {
-      popup.error('Could not load the defect details.');
-      setDefectComp(null);
-    } finally {
-      setDefectLoading(false);
-    }
   };
 
   const exportCsv = async () => {
@@ -214,6 +197,10 @@ function ComplaintList() {
   };
 
   const activeStatusName = statuses.find((s) => String(s.value) === statusIds);
+  const isDefectPendingView = statusIds.split(',').map((s) => Number(s.trim())).includes(3);
+  const displayRows = isDefectPendingView
+    ? rows.filter((c) => Number(c.StatusID) === 3 && Number(c.PendingDefectCount ?? 0) > 0)
+    : rows;
 
   return (
     <div>
@@ -239,7 +226,7 @@ function ComplaintList() {
           )}
           {!isSubSO && (
             <span className="badge-soft badge-soft-neutral">
-              <i className="bi bi-collection" /> {rows.length} complaint{rows.length === 1 ? '' : 's'}
+              <i className="bi bi-collection" /> {displayRows.length} complaint{displayRows.length === 1 ? '' : 's'}
             </span>
           )}
           <button
@@ -442,7 +429,7 @@ function ComplaintList() {
                 ? statusText(activeStatusName.label)
                 : 'All Complaints'}
           </div>
-          {!isSubSO && <span className="badge-soft badge-soft-primary">{rows.length} shown</span>}
+          {!isSubSO && <span className="badge-soft badge-soft-primary">{displayRows.length} shown</span>}
         </div>
         <div className="card-body p-0">
           {loading ? (
@@ -452,7 +439,7 @@ function ComplaintList() {
               </div>
               <div className="text-muted mt-2" style={{ fontSize: '0.85rem' }}>Loading complaints...</div>
             </div>
-          ) : rows.length === 0 ? (
+          ) : displayRows.length === 0 ? (
             <div className="empty-state">
               <i className="bi bi-inbox" />
               <h6 className="fw-semibold mt-2 mb-1">No complaints found</h6>
@@ -493,7 +480,7 @@ function ComplaintList() {
                 </thead>
                 <tbody>
                   {aspxView ? (
-                    rows.map((c, i) => (
+                    displayRows.map((c, i) => (
                       <tr key={c.CompID} onClick={() => viewComplaint(c)} style={{ cursor: 'pointer' }}>
                         <td className="text-muted">{i + 1}</td>
                         <td className="text-muted">{c.FormType || '—'}</td>
@@ -515,14 +502,14 @@ function ComplaintList() {
                             <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => viewComplaint(c)}>
                               <i className="bi bi-eye" /> View
                             </button>
-                            {Number(c.StatusID) === 3 && (
+                            {Number(c.StatusID) === 3 && Number(c.PendingDefectCount ?? 0) > 0 && (
                               <button
                                 type="button"
                                 className="btn btn-sm btn-primary"
-                                onClick={() => openDefect(c)}
-                                title="View the defect(s) communicated by the Scrutiny Officer and respond"
+                                onClick={() => navigate(`/complaints/${c.CompID}`)}
+                                title="View and respond to defect(s) communicated by the Scrutiny Officer"
                               >
-                                <i className="bi bi-list-check" /> Defect
+                                <i className="bi bi-list-check" /> Respond to Defects
                               </button>
                             )}
                           </div>
@@ -530,7 +517,7 @@ function ComplaintList() {
                       </tr>
                     ))
                   ) : (
-                    rows.map((c) => (
+                    displayRows.map((c) => (
                     <tr key={c.CompID} onClick={() => viewComplaint(c)} style={{ cursor: 'pointer' }}>
                       <td className="fw-semibold text-muted col-num">{c.CompNo}</td>
                       <td>
@@ -593,7 +580,7 @@ function ComplaintList() {
                     <td colSpan="7">Total</td>
                     <td />
                     <td />
-                    <td className="text-center fw-bold" style={{ fontSize: '1rem' }}>{rows.length}</td>
+                    <td className="text-center fw-bold" style={{ fontSize: '1rem' }}>{displayRows.length}</td>
                   </tr>
                 </tfoot>
                 )}
@@ -657,49 +644,6 @@ function ComplaintList() {
         </>
       )}
 
-      {defectComp && (
-        <>
-          <div className="modal-backdrop show" onClick={() => setDefectComp(null)} />
-          <div
-            className="modal show d-block"
-            role="dialog"
-            tabIndex="-1"
-            onMouseDown={(e) => { if (e.target === e.currentTarget) setDefectComp(null); }}
-          >
-            <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
-              <div className="modal-content">
-                <div className="modal-header">
-                  <h5 className="modal-title">
-                    <i className="bi bi-list-check me-2" />
-                    Defect Rectification — {defectComp.CompNo}
-                  </h5>
-                  <button type="button" className="btn-close" onClick={() => setDefectComp(null)} aria-label="Close" />
-                </div>
-                <div className="modal-body">
-                  {defectLoading ? (
-                    <div className="text-center p-4">
-                      <div className="spinner-border text-primary" role="status">
-                        <span className="visually-hidden">Loading...</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <DefectRectificationCard
-                      compId={defectComp.CompID}
-                      c={defectComp}
-                      onRefresh={() => { openDefect(defectComp); applyFilter(statusIds); }}
-                      canEdit={Number(defectComp.StatusID) === 3}
-                      minimal
-                    />
-                  )}
-                </div>
-                <div className="modal-footer">
-                  <button type="button" className="btn btn-light" onClick={() => setDefectComp(null)}>Close</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 }

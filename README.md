@@ -204,6 +204,25 @@ All endpoints except `/api/auth/*` and `/api/health` require `Authorization: Bea
 | GET | `/api/master-data/boards` | List board formations |
 | POST | `/api/master-data/boards` | Create board + user |
 
+### Payment gateway (PayU)
+
+Complaint fees are paid through the PayU MID configured by `PAYU_MERCHANT_ID`.
+Disciplinary-form orders use a dedicated `DCFORM`
+order-ID prefix (eForms uses `EFORMAS`) so gateway receipts can be reconciled
+per form. Credentials are read from `backend/.env` — see `.env.example`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/payment/initiate` | Creates a `DCFORM…` order and returns the PayU form payload (`actionUrl`, `fields`) |
+| POST | `/api/payment/callback` | Public PayU success/failure webhook; verifies the SHA-512 hash, records the result and redirects to `/payment/status` |
+| GET | `/api/payment/order/:orderId` | Order status (owner or staff) |
+| GET | `/api/payment/orders` | Gateway transactions for reconciliation (staff) |
+
+Apply `backend/db/migrate_payment_gateway.sql` once to create
+`tbl_PaymentTransaction`, where initiated orders and callback results are
+stored. In the UI, use **Pay Complaint Fee** in the sidebar or **Pay Online**
+in the complaint form's Payment Details section.
+
 **Master types** (for `/api/masters/:type`): `1` academic session, `2` complaint type, `3` states, `4` payment modes, `5` documents, `6` users by type, `7` cities, `8` schedules, `9` schedule items, `10` part numbers, `12` complaint statuses, `13` council years, `14` board formations, `20` adjournment reasons, etc.
 
 ---

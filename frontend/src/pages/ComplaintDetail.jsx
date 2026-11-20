@@ -1254,6 +1254,251 @@ function RespondentStatementCard({ compId, c, onRefresh, isAnswerableMember, alr
   );
 }
 
+function DefectFieldEditor({ defect, complaint, row, onChange }) {
+  const targets = new Set([...(defect?.TargetTexts || []), ...(defect?.TargetAttachments || [])]);
+  const fv = (row && row.fieldValues) || {};
+  const setF = (patch) => onChange({ ...fv, ...(patch || {}) });
+
+  const [states, setStates] = useState([]);
+  const [rCities, setRCities] = useState([]);
+  const [cCities, setCCities] = useState([]);
+  const [profCities, setProfCities] = useState([]);
+
+  const has = (k) => targets.has(k);
+  const needsRespondent = has('IsFirm') || has('ResName') || has('ResRegistrationNo') || has('NameofFirm') || has('FirmNo') || has('ResMobileNo') || has('ResEmailID');
+  const needsResAddr = has('ResProfAddress') || has('ResProfessionalAddress') || has('ResCommAddress') || has('RStateID') || has('RCityID') || has('FirmProfStateID') || has('FirmProfCityID') || has('FirmProfAddress') || has('FirmCommAddress');
+  const needsCompAddr = has('Address') || has('Area') || has('Landmark') || has('Pincode') || has('PinCode') || has('StateID') || has('CityID');
+  const needsCharges = has('ParticularMisconduct') || has('BriefStatement');
+  const needsReg = has('RegulatorAttachment');
+  const needsMis = has('MisconductAttachment');
+  const needsSign = has('ComplaintantSignature');
+  const needsVerPlace = has('VerificationPlace');
+  const needsName = has('Name') || has('PersonName');
+
+  useEffect(() => {
+    if (!(needsRespondent || needsResAddr || needsCompAddr)) return;
+    api.get('/masters/3').then((r) => setStates(r.data || [])).catch(() => {});
+  }, [needsRespondent, needsResAddr, needsCompAddr]);
+
+  const val = (k) => {
+    if (Object.prototype.hasOwnProperty.call(fv, k)) return fv[k];
+    if (!complaint) return '';
+    if (k === 'ResProfAddress' || k === 'ResProfessionalAddress') return complaint.ResProfAddress ?? '';
+    if (k === 'RCityName') return complaint.RCityName ?? complaint.RCityname ?? '';
+    if (k === 'Pincode' || k === 'PinCode') return complaint.Pincode ?? complaint.PinCode ?? '';
+    return complaint[k] ?? '';
+  };
+
+  const isFirm = String(val('IsFirm') ?? 0) === '1' || val('IsFirm') === 1 || val('IsFirm') === true;
+
+  useEffect(() => {
+    const id = val('RStateID');
+    if (id) api.get(`/masters/7?option1=${id}`).then((r) => setRCities(r.data || [])).catch(() => setRCities([]));
+    else setRCities([]);
+  }, [val('RStateID')]);
+  useEffect(() => {
+    const id = val('StateID');
+    if (id) api.get(`/masters/7?option1=${id}`).then((r) => setCCities(r.data || [])).catch(() => setCCities([]));
+    else setCCities([]);
+  }, [val('StateID')]);
+  useEffect(() => {
+    const id = val('FirmProfStateID');
+    if (id) api.get(`/masters/7?option1=${id}`).then((r) => setProfCities(r.data || [])).catch(() => setProfCities([]));
+    else setProfCities([]);
+  }, [val('FirmProfStateID')]);
+
+  const onUpload = async (col, file, type) => {
+    if (!file) return;
+    try {
+      const up = await uploadFile(file, type || 'defect');
+      setF({ [col]: up.relativePath || up.path || up.filename || '' });
+    } catch {}
+  };
+
+  const onRState = (e) => {
+    const sid = e.target.value;
+    const st = states.find((x) => String(x.value) === String(sid));
+    const reg = regionForState(st?.label, st?.Region || st?.region) || '';
+    setF({ RStateID: sid, RCityID: '', RStateName: st?.label || '', RComRegion: reg });
+  };
+  const onRCity = (e) => {
+    const cid = e.target.value;
+    const ct = rCities.find((x) => String(x.value) === String(cid));
+    setF({ RCityID: cid, RCityName: ct?.label || '' });
+  };
+  const onCState = (e) => {
+    const sid = e.target.value;
+    const st = states.find((x) => String(x.value) === String(sid));
+    const reg = regionForState(st?.label, st?.Region || st?.region) || '';
+    setF({ StateID: sid, CityID: '', Region: reg });
+  };
+  const onCCity = (e) => { setF({ CityID: e.target.value }); };
+  const onProfState = (e) => {
+    const sid = e.target.value;
+    const st = states.find((x) => String(x.value) === String(sid));
+    setF({ FirmProfStateID: sid, FirmProfCityID: '', RRegion: regionForState(st?.label, st?.Region || st?.region) || '' });
+  };
+  const onProfCity = (e) => { setF({ FirmProfCityID: e.target.value }); };
+
+  if (!(needsRespondent || needsResAddr || needsCompAddr || needsCharges || needsReg || needsMis || needsSign || needsVerPlace || needsName)) return null;
+
+  const input = (col, label, colClass = 'col-md-4', type = 'text') => (
+    <div className={colClass} key={col}>
+      <label className="form-label small mb-1">{label}</label>
+      <input type={type} className="form-control form-control-sm" value={val(col) ?? ''} onChange={(e) => setF({ [col]: e.target.value })} />
+    </div>
+  );
+  const textArea = (col, label, rowsN = 3) => (
+    <div className="col-12" key={col}>
+      <label className="form-label small mb-1">{label}</label>
+      <textarea className="form-control form-control-sm" rows={rowsN} value={val(col) ?? ''} onChange={(e) => setF({ [col]: e.target.value })} />
+    </div>
+  );
+
+  return (
+    <div className="col-12">
+      <div className="border rounded p-3 bg-white mb-2">
+        <div className="small fw-semibold mb-2"><i className="bi bi-pencil-square me-1"></i>Update Form I details for this defect</div>
+        <div className="row g-2">
+          {needsName && has('Name') ? input('Name', 'Name of Complainant', 'col-md-6') : null}
+          {needsName && has('PersonName') ? input('PersonName', 'Name of person having knowledge of facts', 'col-md-6') : null}
+
+          {needsRespondent ? (
+            <>
+              <div className="col-12"><div className="small text-muted fw-semibold mt-1">Respondent (Member / Firm)</div></div>
+              <div className="col-md-4">
+                <label className="form-label small mb-1">Respondent Type</label>
+                <select className="form-select form-select-sm" value={isFirm ? '1' : '0'} onChange={(e) => setF({ IsFirm: e.target.value === '1' ? 1 : 0 })}>
+                  <option value="0">Member</option>
+                  <option value="1">Firm</option>
+                </select>
+              </div>
+              {isFirm ? (
+                <>
+                  {input('NameofFirm', 'Name of Firm', 'col-md-4')}
+                  {input('FirmNo', 'Firm Registration No.', 'col-md-4')}
+                </>
+              ) : (
+                <>
+                  {input('ResName', 'Name of Member', 'col-md-4')}
+                  {input('ResRegistrationNo', 'Membership No.', 'col-md-4')}
+                </>
+              )}
+              {input('ResMobileNo', 'Mobile No.', 'col-md-3')}
+              {input('ResEmailID', 'Email ID', 'col-md-3', 'email')}
+            </>
+          ) : null}
+
+          {needsResAddr ? (
+            <>
+              <div className="col-12"><div className="small text-muted fw-semibold mt-1">Respondent Address</div></div>
+              {(has('ResProfAddress') || has('ResProfessionalAddress')) ? input('ResProfAddress', 'Professional Address', 'col-md-6') : null}
+              {has('FirmProfAddress') ? input('FirmProfAddress', 'Firm Professional Address', 'col-md-6') : null}
+              {has('ResCommAddress') ? input('ResCommAddress', 'Communication Address', 'col-md-6') : null}
+              {has('FirmCommAddress') ? input('FirmCommAddress', 'Firm Communication Address', 'col-md-6') : null}
+              {has('RStateID') ? (
+                <div className="col-md-3">
+                  <label className="form-label small mb-1">Communication State</label>
+                  <select className="form-select form-select-sm" value={val('RStateID') || ''} onChange={onRState}>
+                    <option value="">--Select--</option>
+                    {states.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
+                  </select>
+                </div>
+              ) : null}
+              {has('RCityID') ? (
+                <div className="col-md-3">
+                  <label className="form-label small mb-1">Communication City</label>
+                  <select className="form-select form-select-sm" value={val('RCityID') || ''} onChange={onRCity} disabled={!val('RStateID')}>
+                    <option value="">--Select--</option>
+                    {rCities.map((ct) => <option key={ct.value} value={ct.value}>{ct.label}</option>)}
+                  </select>
+                </div>
+              ) : null}
+              {has('FirmProfStateID') ? (
+                <div className="col-md-3">
+                  <label className="form-label small mb-1">Professional State (Firm)</label>
+                  <select className="form-select form-select-sm" value={val('FirmProfStateID') || ''} onChange={onProfState}>
+                    <option value="">--Select--</option>
+                    {states.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
+                  </select>
+                </div>
+              ) : null}
+              {has('FirmProfCityID') ? (
+                <div className="col-md-3">
+                  <label className="form-label small mb-1">Professional City (Firm)</label>
+                  <select className="form-select form-select-sm" value={val('FirmProfCityID') || ''} onChange={onProfCity} disabled={!val('FirmProfStateID')}>
+                    <option value="">--Select--</option>
+                    {profCities.map((ct) => <option key={ct.value} value={ct.value}>{ct.label}</option>)}
+                  </select>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          {needsCompAddr ? (
+            <>
+              <div className="col-12"><div className="small text-muted fw-semibold mt-1">Complainant Address</div></div>
+              {has('Address') ? input('Address', 'Flat/House/Building', 'col-md-6') : null}
+              {has('Area') ? input('Area', 'Area/Street/Sector/Village', 'col-md-6') : null}
+              {has('Landmark') ? input('Landmark', 'Landmark', 'col-md-4') : null}
+              {has('StateID') ? (
+                <div className="col-md-4">
+                  <label className="form-label small mb-1">State</label>
+                  <select className="form-select form-select-sm" value={val('StateID') || ''} onChange={onCState}>
+                    <option value="">--Select--</option>
+                    {states.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
+                  </select>
+                </div>
+              ) : null}
+              {has('CityID') ? (
+                <div className="col-md-4">
+                  <label className="form-label small mb-1">City</label>
+                  <select className="form-select form-select-sm" value={val('CityID') || ''} onChange={onCCity} disabled={!val('StateID')}>
+                    <option value="">--Select--</option>
+                    {cCities.map((ct) => <option key={ct.value} value={ct.value}>{ct.label}</option>)}
+                  </select>
+                </div>
+              ) : null}
+              {(has('Pincode') || has('PinCode')) ? input('Pincode', 'Pincode', 'col-md-4') : null}
+            </>
+          ) : null}
+
+          {needsCharges ? (
+            <>
+              <div className="col-12"><div className="small text-muted fw-semibold mt-1">Charges / Statement of Facts</div></div>
+              {has('BriefStatement') ? textArea('BriefStatement', 'Brief Facts / Statement', 3) : null}
+              {has('ParticularMisconduct') ? textArea('ParticularMisconduct', 'Particulars of Misconduct', 3) : null}
+            </>
+          ) : null}
+
+          {needsReg ? (
+            <div className="col-md-6">
+              <label className="form-label small mb-1">Authorization Letter / Board Resolution</label>
+              <input type="file" className="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => onUpload('RegulatorAttachment', e.target.files?.[0], 'regulator')} />
+              {val('RegulatorAttachment') ? <div className="small mt-1"><a href={'/documents/' + val('RegulatorAttachment')} target="_blank" rel="noreferrer">View current document</a></div> : null}
+            </div>
+          ) : null}
+          {needsMis ? (
+            <div className="col-md-6">
+              <label className="form-label small mb-1">Documentary Evidence (upload corrected file)</label>
+              <input type="file" className="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => onUpload('MisconductAttachment', e.target.files?.[0], 'misconduct')} />
+              {val('MisconductAttachment') ? <div className="small mt-1"><a href={'/documents/' + val('MisconductAttachment')} target="_blank" rel="noreferrer">View current document</a></div> : null}
+            </div>
+          ) : null}
+          {needsSign ? (
+            <div className="col-md-6">
+              <label className="form-label small mb-1">Complainant Signature</label>
+              <input type="file" className="form-control form-control-sm" accept=".png,.jpg,.jpeg" onChange={(e) => onUpload('ComplaintantSignature', e.target.files?.[0], 'signature')} />
+              {val('ComplaintantSignature') ? <div className="small mt-1"><a href={'/documents/' + val('ComplaintantSignature')} target="_blank" rel="noreferrer">View current signature</a></div> : null}
+            </div>
+          ) : null}
+          {needsVerPlace ? input('VerificationPlace', 'Verification Place', 'col-md-6') : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal = false }) {
   const popup = usePopups();
   const defects = c.defects || [];
@@ -1263,10 +1508,18 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
   useEffect(() => {
     const next = {};
     defects.forEach((defect) => {
+      const targetCols = [...(defect.TargetTexts || []), ...(defect.TargetAttachments || [])];
+      const fieldValues = {};
+      targetCols.forEach((col) => {
+        const alt = col === 'ResProfessionalAddress' ? 'ResProfAddress' : col;
+        const v = c ? ((c[alt] !== undefined && c[alt] !== null) ? c[alt] : c[col]) : undefined;
+        if (v !== undefined && v !== null) fieldValues[col] = v;
+      });
       next[defect.ComplaintDefectID] = {
         remark: defect.ResponseRemark || '',
         attachment: defect.ResponseAttachment || '',
         file: null,
+        fieldValues,
       };
     });
     setRows(next);
@@ -1276,7 +1529,7 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
   if (!defects.length) return null;
 
   const respondedCount = defects.filter(
-    (defect) => String(defect.ResponseRemark || '').trim() || defect.ResponseAttachment
+    (defect) => String(defect.ResponseRemark || '').trim() || defect.ResponseAttachment || defect.RespondedDate
   ).length;
 
   const updateRow = (defectId, patch) => {
@@ -1290,8 +1543,10 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
     e.preventDefault();
     for (const defect of defects) {
       const row = rows[defect.ComplaintDefectID] || {};
-      if (!String(row.remark || '').trim() && !row.attachment && !row.file) {
-        popup.warning(`Please add a remark or supporting document for: ${defect.DefectText}`);
+      const fv = row.fieldValues || {};
+      const hasFV = Object.values(fv).some((v) => v !== undefined && v !== null && String(v).trim() !== '');
+      if (!String(row.remark || '').trim() && !row.attachment && !row.file && !hasFV) {
+        popup.warning(`Please provide updated details, remark, or supporting document for: ${defect.DefectText}`);
         return;
       }
       if (row.file && row.file.size > 20 * 1024 * 1024) {
@@ -1307,12 +1562,16 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
         let attachment = row.attachment || '';
         if (row.file) {
           const uploaded = await uploadFile(row.file, 'defect');
-          attachment = uploaded.path || uploaded.filename || '';
+          attachment = uploaded.relativePath || uploaded.path || uploaded.filename || '';
         }
+        const fvPayload = row.fieldValues || {};
+        const cleanFV = {};
+        Object.entries(fvPayload).forEach(([k, v]) => { if (v !== undefined) cleanFV[k] = v; });
         responses.push({
           complaintDefectId: defect.ComplaintDefectID,
           remark: String(row.remark || '').trim(),
           attachment,
+          fieldValues: Object.keys(cleanFV).length ? cleanFV : undefined,
         });
       }
       const res = await api.post(`/complaints/${compId}/defects/respond`, { responses });
@@ -1341,14 +1600,20 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
           <p className="small text-muted mb-3">
             The Scrutiny Officer has returned the complaint for rectification of the following defects.
             {canEdit
-              ? ' Add a supporting document and/or a remark against every defect and submit. The complaint returns to the SO only after all defects are answered.'
+              ? ' Review the communication, update relevant Form I details where shown, add a remark/supporting document for every defect, and submit.'
               : ' The response submitted by the complainant is shown against each defect.'}
           </p>
+        )}
+        {!canEdit && respondedCount === defects.length && defects.length > 0 && (
+          <div className="alert alert-success small py-2 mb-3">
+            <i className="bi bi-check-circle me-1" />
+            All defect responses have been submitted and are visible to the SO.
+          </div>
         )}
         <form onSubmit={submitResponses}>
           {defects.map((defect, index) => {
             const row = rows[defect.ComplaintDefectID] || {};
-            const hasResponse = String(defect.ResponseRemark || '').trim() || defect.ResponseAttachment;
+            const hasResponse = String(defect.ResponseRemark || '').trim() || defect.ResponseAttachment || defect.RespondedDate;
             return (
               <div className="border rounded p-3 mb-3" key={defect.ComplaintDefectID}>
                 <div className="d-flex gap-2">
@@ -1368,14 +1633,10 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
                       </div>
                     )}
                     {!minimal && defect.Communication && (
-                      <details className="mt-1">
-                        <summary className="small text-primary" style={{ cursor: 'pointer' }}>
-                          View communication sent by SO
-                        </summary>
-                        <div className="small text-muted mt-2" style={{ whiteSpace: 'pre-wrap' }}>
-                          {defect.Communication}
-                        </div>
-                      </details>
+                      <div className="mt-2 p-2 rounded border bg-light">
+                        <div className="small fw-semibold text-secondary mb-1"><i className="bi bi-chat-left-text me-1"></i>Communication / required rectification</div>
+                        <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{defect.Communication}</div>
+                      </div>
                     )}
                   </div>
                   <span className={`badge-soft ${hasResponse ? 'badge-soft-success' : 'badge-soft-warning'} align-self-start`}>
@@ -1385,6 +1646,12 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
 
                 {canEdit ? (
                   <div className="row g-2 mt-2">
+                    <DefectFieldEditor
+                      defect={defect}
+                      complaint={c}
+                      row={row}
+                      onChange={(fieldValues) => updateRow(defect.ComplaintDefectID, { fieldValues })}
+                    />
                     <div className="col-12">
                       <label className="form-label small fw-semibold mb-1">Remark / explanation</label>
                       <textarea
@@ -1402,7 +1669,7 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
                         className="form-control"
                         accept=".pdf,.jpg,.jpeg,.png"
                         onChange={(e) =>
-                          updateRow(defect.ComplaintDefectID, { file: e.target.files[0] || null })
+                          updateRow(defect.ComplaintDefectID, { file: e.target.files?.[0] || null })
                         }
                       />
                       {(row.attachment || row.file) && (
@@ -1447,8 +1714,7 @@ export function DefectRectificationCard({ compId, c, onRefresh, canEdit, minimal
               {!minimal && (
                 <div className="alert alert-info small py-2">
                   <i className="bi bi-info-circle me-1" />
-                  Every defect needs either a remark or a supporting document. Attachments added here are also
-                  stored with the complaint documents.
+                  For each defect provide updated Form I details (if shown), and/or a remark/supporting document. Attachments added here are also stored with the complaint documents.
                 </div>
               )}
               <button type="submit" className="btn btn-primary w-100" disabled={busy}>
@@ -2722,6 +2988,7 @@ export default function ComplaintDetail() {
       const names = {
         compilation: `Compilation_${baseName}.pdf`,
         scrutiny: `ScrutinySheet_${baseName}.pdf`,
+        'defect-sheet': `DefectSheet_${baseName}.pdf`,
       };
       a.download = names[kind] || `${baseName}.pdf`;
       document.body.appendChild(a);
@@ -2753,7 +3020,7 @@ export default function ComplaintDetail() {
     if (!c) return;
     const directComplainant = Number(c.UserID) === Number(user?.UserID);
     const pending = (c.defects || []).some(
-      (defect) => !String(defect.ResponseRemark || '').trim() && !defect.ResponseAttachment
+      (defect) => !String(defect.ResponseRemark || '').trim() && !defect.ResponseAttachment && !defect.RespondedDate
     );
     if (directComplainant && Number(c.StatusID) === 3 && pending) {
       setDefectPanelOpen(true);
@@ -2883,9 +3150,12 @@ export default function ComplaintDetail() {
   const ddActionStatuses = [5, 10, 18, 24, 31, 125, 126, 127, 128, 129, 130];
   const activePanels = WORKFLOW_PANELS.filter((p) => p.roles.includes(ut) && p.statuses.includes(Number(c.StatusID)));
   const pendingDefectCount = (c.defects || []).filter(
-    (defect) => !String(defect.ResponseRemark || '').trim() && !defect.ResponseAttachment
+    (defect) => !String(defect.ResponseRemark || '').trim() && !defect.ResponseAttachment && !defect.RespondedDate
   ).length;
   const hasPendingDefects = pendingDefectCount > 0;
+  const hasDefectSheet = (c.defects || []).some(
+    (defect) => String(defect.ResponseRemark || '').trim() || defect.ResponseAttachment || defect.RespondedDate
+  );
 
   // An "action taken" window is valid only until the current user has actually
   // acted at the current status level. After that it stays hidden until the case
@@ -2955,6 +3225,11 @@ export default function ComplaintDetail() {
               <i className="bi bi-download me-1" />Download Form
             </button>
           )}
+          {hasDefectSheet && (viewerIsInternal || viewerRole === 'complainant' || isComplainant) && (
+            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => downloadPdf('defect-sheet')}>
+              <i className="bi bi-file-earmark-arrow-down me-1" />Defect Sheet
+            </button>
+          )}
           {/* Scrutiny Sheet download is temporarily disabled (comment mode).
           {viewerIsInternal && (
             <button
@@ -2990,10 +3265,13 @@ export default function ComplaintDetail() {
           >
             <i className="bi bi-arrow-clockwise" />
           </button>
-          {c.defects?.length > 0 && (
+          {c.defects?.length > 0 &&
+            (isComplainant
+              ? Number(c.StatusID) === 3 && hasPendingDefects
+              : viewerIsInternal) && (
             <button
               type="button"
-              className={`btn btn-sm ${hasPendingDefects ? 'btn-warning' : 'btn-outline-primary'}`}
+              className={`btn btn-sm ${isComplainant && hasPendingDefects ? 'btn-warning' : 'btn-outline-primary'}`}
               onClick={() => setDefectPanelOpen(true)}
             >
               <i className="bi bi-list-check me-1" />
@@ -3004,16 +3282,6 @@ export default function ComplaintDetail() {
           )}
         </div>
       </div>
-
-      {c.defects?.length > 0 &&
-        !(isComplainant && Number(c.StatusID) === 3 && hasPendingDefects) && (
-        <DefectRectificationCard
-          compId={id}
-          c={c}
-          onRefresh={reload}
-          canEdit={isComplainant && Number(c.StatusID) === 3}
-        />
-      )}
 
       {(c.ClubbedWithCompID || (clubbedComplaintsList && clubbedComplaintsList.length > 0)) && (
         <div className="card ds-card mb-4">
@@ -3926,14 +4194,14 @@ export default function ComplaintDetail() {
             </div>
           </div>
 
-          {ut === 5 && !scSheetSaved && [2, 4].includes(Number(c.StatusID)) && (
+          {ut === 5 && !scSheetSaved && Number(c.StatusID) === 2 && (
             <div className="alert alert-warning py-2 small">
               <i className="bi bi-clipboard-plus me-1" />
               Please submit the Entity &amp; Audio/Video details first, then you can take further action on this complaint.
             </div>
           )}
 
-          {ut === 5 && !iActedAtCurrent && scSheetSaved && [2, 4].includes(Number(c.StatusID)) && (
+          {ut === 5 && !iActedAtCurrent && (scSheetSaved || Number(c.StatusID) === 4) && [2, 4].includes(Number(c.StatusID)) && (
             <div className="card ds-card mb-4">
               <div className="card-header">
                 <div className="card-title">
@@ -3980,19 +4248,8 @@ export default function ComplaintDetail() {
                       />
                     </div>
                   )}
-                  <div className="mb-3">
-                    <label className="form-label small fw-semibold">
-                      {soAction === 'defect' ? 'Supporting document (optional, PDF, max 20 MB)' : 'Attachment (PDF, max 20 MB)'}
-                    </label>
-                    <input
-                      type="file"
-                      className="form-control"
-                      accept=".pdf"
-                      onChange={(e) => setSoFile(e.target.files[0] || null)}
-                    />
-                  </div>
-                   {!isFirstComplaint && (
-                   <div className="mb-3">
+                    {!isFirstComplaint && (
+                    <div className="mb-3">
                       <label className="form-label small fw-semibold">Is this complaint similar to another complaint filed by a different member against the same member?</label>
                     </div>
                     )}
@@ -4074,7 +4331,7 @@ export default function ComplaintDetail() {
                             setSoSelectedPreviousComp('');
                           }}
                         />
-                        <span className="radio-card-label">No</span>
+                        <span className="radio-card-label">No similar case found</span>
                       </label>
                     )}
 
@@ -4434,6 +4691,17 @@ export default function ComplaintDetail() {
                       </div>
                     )}
                     <RichEditor value={soRemarks} onChange={setSoRemarks} required />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label small fw-semibold">
+                      {soAction === 'defect' ? 'Supporting document (optional, PDF, max 20 MB)' : 'Attachment (PDF, max 20 MB)'}
+                    </label>
+                    <input
+                      type="file"
+                      className="form-control"
+                      accept=".pdf"
+                      onChange={(e) => setSoFile(e.target.files[0] || null)}
+                    />
                   </div>
                   <button type="submit" className="btn btn-primary w-100" disabled={soBusy}>
                     {soBusy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}

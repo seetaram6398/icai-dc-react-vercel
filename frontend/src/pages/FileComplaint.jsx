@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { uploadFile } from '../api/upload';
@@ -55,7 +55,7 @@ const emptyForm = {
   name: '', email: '', countryCode: '91', mobile: '', stdCode: '', landlineNo: '',
   address: '', area: '', landmark: '', stateId: '', cityId: '', pincode: '', aadharNo: '',
   compMembershipNo: '',
-  aadharPhoto: '', complaintantSignature: '', complainantRegion: '',
+  aadharPhoto: '', complaintantSignature: '', signedFormICopy: '', complainantRegion: '',
   identityType: '',
   salutation: '', relationName: '',
   isFirm: false, firmNo: '', nameOfFirm: '', firmProfAddress: '', firmCommAddress: '',
@@ -262,6 +262,10 @@ export default function FileComplaint() {
   const [captcha, setCaptcha] = useState(null);
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [memberLookupBusy, setMemberLookupBusy] = useState(false);
+  const [compCaptcha, setCompCaptcha] = useState(null);
+  const [compCaptchaAnswer, setCompCaptchaAnswer] = useState('');
+  const [compLookupBusy, setCompLookupBusy] = useState(false);
+  const [complainantIsIcaiMember, setComplainantIsIcaiMember] = useState('yes');
   // Preview saves the complaint as a draft (IsTemp=1). It is only considered
   // submitted, and auto-assigned to an SO, when the Submit button is pressed.
   const [isDraftComplaint, setIsDraftComplaint] = useState(searchParams.get('draft') === '1');
@@ -301,6 +305,8 @@ export default function FileComplaint() {
   const [answerableMembers, setAnswerableMembers] = useState([]);
 
   const [busy, setBusy] = useState(false);
+  const [payNowBusy, setPayNowBusy] = useState(false);
+  const gatewayFormRef = useRef(null);
   const popup = usePopups();
 
   const set = (k) => (e) => {
@@ -369,6 +375,7 @@ export default function FileComplaint() {
           aadharPhoto: user.AadharPhoto || '',
           identityType: user.IdentityType || (user.AadharNo ? 'PAN' : ''),
           complaintantSignature: user.ComplaintantSignature || '',
+          signedFormICopy: user.SignedFormICopy || '',
           regulatorName: user.NameOfOffice || '',
           regulatorDesignation: user.RegulatorDesignation || '',
           complainantRegion: regionForState(stateObj?.label, user.Region || stateObj?.Region || stateObj?.region || f.complainantRegion),
@@ -403,11 +410,13 @@ export default function FileComplaint() {
   }, [commCities, form.isChkSameAddress, form.resType, form.resCityId, form.resRCityName]);
 
   // Verification place is taken from the complainant's selected professional city.
+  // Sub SO (offline submission) can enter/edit verification details manually.
   useEffect(() => {
+    if (isSubSO) return;
     const label = cities.find((c) => String(c.value) === String(form.cityId))?.label || '';
     if (!label) return;
     setForm((f) => (f.verificationPlace === label ? f : { ...f, verificationPlace: label }));
-  }, [cities, form.cityId]);
+  }, [cities, form.cityId, isSubSO]);
 
   // Resolve schedule/part/item labels (edit mode) after masters are available.
   const resolveScheduleLabels = async (scheds) => {
@@ -476,6 +485,7 @@ export default function FileComplaint() {
           aadharPhoto: d.AadharPhoto || '',
           identityType: d.IdentityType || (d.AadharNo ? 'PAN' : ''),
           complaintantSignature: d.ComplaintantSignature || '',
+          signedFormICopy: d.SignedFormICopy || '',
           complainantRegion: regionForState(stateObj?.label, d.Region || stateObj?.Region || stateObj?.region),
           salutation: d.Salutation || '',
           relationName: d.RelationName || '',
@@ -677,6 +687,14 @@ export default function FileComplaint() {
     } catch (_) {}
   };
 
+  const loadCompCaptcha = async () => {
+    try {
+      const { data } = await api.get('/captcha/generate');
+      setCompCaptcha(data);
+      setCompCaptchaAnswer('');
+    } catch (_) {}
+  };
+
   // CAPTCHA auto-mode: load it as soon as the relevant section is shown —
   // no "Load CAPTCHA" click required. Reloads when the respondent type flips
   // between Member (lookup captcha) and Firm (answerable-member captcha).
@@ -685,6 +703,11 @@ export default function FileComplaint() {
     else loadCaptcha();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.resType]);
+
+  useEffect(() => {
+    if (isSubSO) loadCompCaptcha();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSubSO]);
 
   const onGetMemberDetails = async () => {
     if (!memberRegNo) { popup.warning('Please enter Membership No'); return; }
@@ -745,6 +768,56 @@ export default function FileComplaint() {
       }
     } finally {
       setMemAnsLookupBusy(false);
+    }
+  };
+
+  const onGetComplainantDetails = async () => {
+    const mno = String(form.compMembershipNo || '').trim();
+    if (!mno) { popup.warning('Please enter Membership No'); return; }
+    if (!compCaptchaAnswer) { popup.warning('Please enter CAPTCHA'); return; }
+    setCompLookupBusy(true);
+    try {
+      try {
+        const vr = await api.post('/captcha/verify', { id: compCaptcha.id, answer: compCaptchaAnswer });
+        if (!vr.data.valid) { popup.warning('Invalid CAPTCHA'); loadCompCaptcha(); return; }
+      } catch (_) { popup.warning('Invalid CAPTCHA'); loadCompCaptcha(); return; }
+      const { data } = await api.post('/auth/member-lookup', {
+        membershipNo: mno,
+      });
+      const st = states.find(
+        (s) => String(s.label || '').trim().toLowerCase() === String(data.professionalState || '').trim().toLowerCase()
+      );
+      let cityId = '';
+      if (st) {
+        try {
+          const cr = await api.get(`/masters/7?option1=${st.value}`);
+          const clist = cr.data || [];
+          setCities(clist);
+          const cm = clist.find(
+            (c) => String(c.label || '').trim().toLowerCase() === String(data.city || '').trim().toLowerCase()
+          );
+          if (cm) cityId = String(cm.value);
+        } catch (_) {}
+      }
+      setForm((f) => ({
+        ...f,
+        compMembershipNo: mno.toUpperCase(),
+        name: data.name || f.name,
+        email: data.email || f.email,
+        mobile: data.mobile || f.mobile,
+        countryCode: f.countryCode || '91',
+        address: data.professionalAddress || f.address,
+        stateId: st ? String(st.value) : f.stateId,
+        cityId: cityId || (st ? '' : f.cityId),
+        complainantRegion: st ? regionForState(st.label, st.Region || st.region) : f.complainantRegion,
+      }));
+      popup.success('Complainant details fetched from ICAI records.');
+      loadCompCaptcha();
+    } catch (ex) {
+      popup.error(ex?.response?.data?.error || 'Complainant details not found');
+      loadCompCaptcha();
+    } finally {
+      setCompLookupBusy(false);
     }
   };
 
@@ -874,6 +947,7 @@ export default function FileComplaint() {
   const validate = () => {
     if (!form.compTypeId) return 'Please select Type of Complaint';
     const ctLabel = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
+    if (isSubSO && !String(form.compMembershipNo || '').trim()) return 'Please enter Complainant Membership No';
     // Regulator details are not required for now.
     // if (GOV_COMP_TYPE_LABELS.includes(ctLabel)) {
     //   if (!form.regulatorName) return 'Please enter Regulator Name';
@@ -903,7 +977,7 @@ export default function FileComplaint() {
     const identityErr = validateIdentityNumber(form.identityType, form.aadharNo);
     if (identityErr) return identityErr;
     if (!form.aadharPhoto) return `Please upload ${identityTypeLabel(form.identityType)} Photo`;
-    if (!form.complaintantSignature) return 'Please upload Complainant Signature';
+    if (!isSubSO && !form.complaintantSignature) return 'Please upload Complainant Signature';
 
     if (form.resType === 'member') {
       if (!form.resName) return 'Please enter Respondent Name';
@@ -926,10 +1000,10 @@ export default function FileComplaint() {
       if (!form.resStateId) return 'Please select Communication State';
       if (!form.resCityId) return 'Please select Communication City';
     } else {
-      if (!form.nameOfFirm) return 'Please enter Name of Firm';
-      if (!isValidFirmName(form.nameOfFirm)) return 'Please enter a valid Name of Firm';
-      if (!form.firmNo) return 'Please enter Firm No';
-      if (!/^[A-Za-z0-9-]{1,20}$/.test(String(form.firmNo).trim())) return 'Please enter a valid Firm No (letters/digits)';
+    if (!form.firmNo) return 'Please enter Firm No';
+    if (!/^[A-Za-z0-9-]{1,20}$/.test(String(form.firmNo).trim())) return 'Please enter a valid Firm No (letters/digits)';
+    if (!form.nameOfFirm) return 'Please enter Name of Firm';
+    if (!isValidFirmName(form.nameOfFirm)) return 'Please enter a valid Name of Firm';
       if (!form.resMobile) return 'Please enter Respondent Mobile No';
       if (!isValidMobile(form.resMobile, form.resCountryCode)) {
         return String(form.resCountryCode) === '91'
@@ -973,7 +1047,7 @@ export default function FileComplaint() {
     }
     if (docs.length === 0) return 'Please provide at least one document/evidence';
     if (!String(form.verificationDate || '').trim()) return 'Please enter Verification Date';
-    if (isFutureDate(form.verificationDate)) return 'Verification Date cannot be in the future';
+    if (!isSubSO && isFutureDate(form.verificationDate)) return 'Verification Date cannot be in the future';
     if (!String(form.verificationPlace || '').trim()) return 'Please enter Verification Place';
     return null;
   };
@@ -1011,8 +1085,8 @@ export default function FileComplaint() {
         schedules: scheduleList,
         answerableMembers,
         isChkSameAddress: form.isChkSameAddress,
-        verificationDate: toDateInput(submittedAt),
-        verificationTime: currentTimeText(submittedAt),
+        verificationDate: isSubSO ? T(form.verificationDate) : toDateInput(submittedAt),
+        verificationTime: isSubSO ? T(form.verificationTime) : currentTimeText(submittedAt),
         verificationPlace: T(form.verificationPlace) || verificationCityLabel,
         declaration: true,
         isFirm: form.resType === 'firm',
@@ -1068,6 +1142,46 @@ export default function FileComplaint() {
     }
   };
 
+  const handlePayNow = async () => {
+    const amount = Number(form.taxableAmount || '2950');
+    if (!Number.isFinite(amount) || amount <= 0) {
+      popup.error('Please enter a valid Taxable Amount');
+      return;
+    }
+    const gatewayWindow = window.open('', 'icai_payment_gateway');
+    if (!gatewayWindow) {
+      popup.warning('Please allow pop-ups to open the payment gateway.');
+      return;
+    }
+    setPayNowBusy(true);
+    try {
+      const { data } = await api.post('/payment/initiate', {
+        amount,
+        name: form.name,
+        email: form.email,
+        phone: form.mobile,
+        productInfo: 'ICAI Disciplinary Form Fee',
+      });
+      const gatewayForm = gatewayFormRef.current;
+      gatewayForm.action = data.actionUrl;
+      gatewayForm.target = gatewayWindow.name;
+      gatewayForm.innerHTML = '';
+      Object.entries(data.fields || {}).forEach(([key, value]) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value;
+        gatewayForm.appendChild(input);
+      });
+      gatewayForm.submit();
+      gatewayWindow.focus();
+    } catch (err) {
+      gatewayWindow.close();
+      popup.error(err?.response?.data?.error || 'Unable to start the payment. Please try again.');
+      setPayNowBusy(false);
+    }
+  };
+
   const goBack = () => navigate(-1);
 
   const formTitle = isGovEmp
@@ -1077,6 +1191,10 @@ export default function FileComplaint() {
   const ctLabel = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
   const isGovType = GOV_COMP_TYPE_LABELS.includes(ctLabel);
   const vp = verificationParts(form.verificationDate);
+  const offlinePaymentDetailsFilled = [
+    'paymentMode', 'paymentDate', 'transRefNo', 'instrumentNo',
+    'instrumentDate', 'taxableAmount', 'taxRate', 'paymentDetails',
+  ].every((key) => String(form[key] ?? '').trim() !== '');
 
   return (
     <div>
@@ -1152,15 +1270,101 @@ export default function FileComplaint() {
             )}
             */}
             {isSubSO && (
-              <div className="col-md-4">
-                <label className="form-label">Membership No.</label>
-                <input
-                  className="form-control"
-                  maxLength={20}
-                  value={form.compMembershipNo}
-                  onChange={set('compMembershipNo')}
-                  placeholder="ICAI membership no (if applicable)"
-                />
+              <div className="col-12">
+                <div className="border rounded bg-light p-3">
+                  <div className="row g-2 mb-3">
+                    <div className="col-12">
+                      <label className="form-label fw-semibold mb-1">Is the complainant an ICAI member? *</label>
+                      <div className="radio-card-list">
+                        <label className="radio-card">
+                          <input
+                            className="form-check-input"
+                            type="radio"
+                            name="complainantIsIcaiMember"
+                            value="yes"
+                            checked={complainantIsIcaiMember === 'yes'}
+                            onChange={() => setComplainantIsIcaiMember('yes')}
+                          />
+                          <span className="radio-card-label">Yes</span>
+                        </label>
+                        <label className="radio-card">
+                          <input
+                            className="form-check-input"
+                            type="radio"
+                            name="complainantIsIcaiMember"
+                            value="no"
+                            checked={complainantIsIcaiMember === 'no'}
+                            onChange={() => setComplainantIsIcaiMember('no')}
+                          />
+                          <span className="radio-card-label">No</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  {complainantIsIcaiMember === 'yes' ? (
+                    <div className="row g-2 align-items-end">
+                      <div className="col-12 col-md-3">
+                        <label className="form-label mb-1">Membership No.</label>
+                        <input
+                          className="form-control"
+                          maxLength={20}
+                          value={form.compMembershipNo}
+                          onChange={set('compMembershipNo')}
+                          placeholder="ICAI membership no"
+                        />
+                      </div>
+                      <div className="col-6 col-md-2">
+                        <label className="form-label mb-1">CAPTCHA</label>
+                        <div className="d-flex align-items-center border rounded bg-white px-2" style={{ height: 38 }}>
+                          {compCaptcha
+                            ? <img src={compCaptcha.image} alt="CAPTCHA" height={30} style={{ cursor: 'pointer', maxWidth: '100%' }} onClick={loadCompCaptcha} title="Click to refresh" />
+                            : <button className="btn btn-link btn-sm p-0" onClick={loadCompCaptcha} type="button">Load CAPTCHA</button>}
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-2">
+                        <label className="form-label mb-1">Enter CAPTCHA</label>
+                        <input
+                          className="form-control"
+                          value={compCaptchaAnswer}
+                          onChange={(e) => setCompCaptchaAnswer(e.target.value)}
+                          placeholder="Enter code"
+                        />
+                      </div>
+                      <div className="col-6 col-md-2">
+                        <label className="form-label mb-1 d-none d-md-block">&nbsp;</label>
+                        <button className="btn btn-outline-secondary w-100" style={{ height: 38 }} onClick={loadCompCaptcha} type="button" title="Refresh CAPTCHA">
+                          <i className="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                      </div>
+                      <div className="col-6 col-md-3">
+                        <label className="form-label mb-1 d-none d-md-block">&nbsp;</label>
+                        <button type="button" className="btn btn-primary w-100" style={{ height: 38 }} disabled={compLookupBusy} onClick={onGetComplainantDetails}>
+                          {compLookupBusy ? <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" /> : <i className="bi bi-search me-1" />}
+                          Get Details
+                        </button>
+                      </div>
+                      <div className="col-12">
+                        <div className="form-text mt-0">Enter ICAI membership number and CAPTCHA to fetch complainant details.</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="row g-2 align-items-end">
+                      <div className="col-12 col-md-4">
+                        <label className="form-label mb-1">Complainant Membership No. (manual entry) *</label>
+                        <input
+                          className="form-control"
+                          maxLength={20}
+                          value={form.compMembershipNo}
+                          onChange={set('compMembershipNo')}
+                          placeholder="Enter membership no"
+                        />
+                      </div>
+                      <div className="col-12">
+                        <div className="form-text mt-0">Enter all complainant details manually below, including the membership number.</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             <div className="col-md-4">
@@ -1286,12 +1490,12 @@ export default function FileComplaint() {
           {form.resType === 'firm' ? (
             <div className="row g-3 mb-3">
               <div className="col-md-4">
-                <label className="form-label">Name of Firm *</label>
-                <input className="form-control" value={form.nameOfFirm} onChange={set('nameOfFirm')} />
-              </div>
-              <div className="col-md-4">
                 <label className="form-label">Firm No *</label>
                 <input className="form-control" value={form.firmNo} onChange={set('firmNo')} />
+              </div>
+              <div className="col-md-4">
+                <label className="form-label">Name of Firm *</label>
+                <input className="form-control" value={form.nameOfFirm} onChange={set('nameOfFirm')} />
               </div>
             </div>
           ) : (
@@ -1449,28 +1653,32 @@ export default function FileComplaint() {
         <div className="card-body">
           <div className="row g-3">
             <div className="col-12">
-              <div className="small text-muted mb-1">
-                <span className="text-danger">*</span> Upload a file or enter a remark (at least one is mandatory; both are allowed).
+              <div className="small text-muted mb-2">
+                <span className="text-danger">*</span> Enter a remark or upload a file (at least one is mandatory; both are allowed).
               </div>
-              <FileUploadInput label="Brief Fact Statement (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
-                accept=".pdf" sizeMB={10}
-                current={form.briefAttachment} onUpload={(path) => setForm({ ...form, briefAttachment: path })} />
-              <label className="form-label mt-3">Brief Fact Statement (Remark)</label>
-              <textarea className="form-control" rows={3} value={form.briefStatement}
+              <label className="form-label">Brief Fact Statement (Remark)</label>
+              <textarea className="form-control" rows={6} value={form.briefStatement}
                 onChange={(e) => setForm({ ...form, briefStatement: e.target.value })}
                 placeholder="Enter remark for Brief Fact Statement" />
+              <div className="mt-3">
+                <FileUploadInput label="Brief Fact Statement (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
+                  accept=".pdf" sizeMB={10}
+                  current={form.briefAttachment} onUpload={(path) => setForm({ ...form, briefAttachment: path })} />
+              </div>
             </div>
             <div className="col-12">
-              <div className="small text-muted mb-1">
-                <span className="text-danger">*</span> Upload a file or enter a remark (at least one is mandatory; both are allowed).
+              <div className="small text-muted mb-2">
+                <span className="text-danger">*</span> Enter a remark or upload a file (at least one is mandatory; both are allowed).
               </div>
-              <FileUploadInput label="Particular of Misconduct (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
-                accept=".pdf" sizeMB={10}
-                current={form.misconductAttachment} onUpload={(path) => setForm({ ...form, misconductAttachment: path })} />
-              <label className="form-label mt-3">Particular of Misconduct (Remark)</label>
-              <textarea className="form-control" rows={3} value={form.particularMisconduct}
+              <label className="form-label">Particular of Misconduct (Remark)</label>
+              <textarea className="form-control" rows={6} value={form.particularMisconduct}
                 onChange={(e) => setForm({ ...form, particularMisconduct: e.target.value })}
                 placeholder="Enter remark for Particular of Misconduct" />
+              <div className="mt-3">
+                <FileUploadInput label="Particular of Misconduct (Upload File)" hint={`Uploaded with duly signed.\n${PDF_HINT}`}
+                  accept=".pdf" sizeMB={10}
+                  current={form.misconductAttachment} onUpload={(path) => setForm({ ...form, misconductAttachment: path })} />
+              </div>
             </div>
           </div>
         </div>
@@ -1526,30 +1734,30 @@ export default function FileComplaint() {
                 {schedules.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
-            <div className="col-md-2">
+            <div className="col-md-3">
               <label className="form-label">Part Number *</label>
               <select className="form-select" value={scheduleItem.partNo} onChange={onPartChange} disabled={!scheduleItem.schedule}>
                 <option value="">--Select--</option>
                 {parts.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
               </select>
             </div>
-            <div className="col-md-2">
+            <div className="col-md-3">
               <label className="form-label">Item No *</label>
               <select className="form-select" value={scheduleItem.itemNo} onChange={(e) => setScheduleItem({ ...scheduleItem, itemNo: e.target.value })} disabled={!scheduleItem.partNo}>
                 <option value="">--Select--</option>
                 {items.map((i) => <option key={i.value} value={i.value}>{i.label}</option>)}
               </select>
             </div>
-            <div className="col-md-2">
+            <div className="col-md-3">
               <label className="form-label">Misconduct Date</label>
               <input type="date" className="form-control" value={scheduleItem.misconductDate} onChange={(e) => setScheduleItem({ ...scheduleItem, misconductDate: e.target.value })} />
             </div>
-            <div className="col-md-2">
+          </div>
+          <div className="row g-3">
+            <div className="col-md-3">
               <label className="form-label">Misconduct Period Date From *</label>
               <input type="date" className="form-control" value={scheduleItem.misconductDateFrom} onChange={(e) => setScheduleItem({ ...scheduleItem, misconductDateFrom: e.target.value })} />
             </div>
-          </div>
-          <div className="row g-3">
             <div className="col-md-3">
               <label className="form-label">Misconduct Period Date To *</label>
               <input type="date" className="form-control" value={scheduleItem.misconductDateTo} onChange={(e) => setScheduleItem({ ...scheduleItem, misconductDateTo: e.target.value })} />
@@ -1578,7 +1786,19 @@ export default function FileComplaint() {
 
       {/* ===== PAYMENT DETAILS ===== */}
       <div className="card mb-3">
-        <div className="card-header bg-success text-white fw-semibold"><i className="bi bi-credit-card me-2"></i>Payment Details</div>
+        <div className="card-header bg-success text-white fw-semibold d-flex justify-content-between align-items-center">
+          <span><i className="bi bi-credit-card me-2"></i>Payment Details</span>
+          {!isGovType && !isSubSO && (
+            <a
+              className="btn btn-light btn-sm"
+              href={`/payment?amount=${encodeURIComponent(form.taxableAmount || '2950')}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <i className="bi bi-box-arrow-up-right me-1"></i>Pay Online
+            </a>
+          )}
+        </div>
         <div className="card-body">
           {isGovType ? (
             <p className="text-muted mb-0">Payment is exempted for Government/Regulatory Agency complaints.</p>
@@ -1632,6 +1852,25 @@ export default function FileComplaint() {
               </div>
             </div>
           )}
+          {!isGovType && isSubSO && (
+            <div className="d-flex justify-content-end align-items-center gap-2 mt-3">
+              {!offlinePaymentDetailsFilled && (
+                <span className="small text-muted">Fill all mandatory payment details to continue.</span>
+              )}
+              <button
+                type="button"
+                className="btn btn-success btn-sm"
+                disabled={!offlinePaymentDetailsFilled || payNowBusy}
+                onClick={handlePayNow}
+              >
+                {payNowBusy ? (
+                  <><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Redirecting...</>
+                ) : (
+                  <><i className="bi bi-box-arrow-up-right me-1"></i>Pay Now</>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1675,24 +1914,43 @@ export default function FileComplaint() {
           <div className="row g-3">
             <div className="col-md-3">
               <label className="form-label">Verified Date *</label>
-              <input type="date" className="form-control" value={form.verificationDate} readOnly />
-              <div className="form-text">Auto-filled with today's date on submission</div>
-            </div>
-            <div className="col-md-2">
-              <label className="form-label">Verified Time *</label>
-              <input className="form-control" value={form.verificationTime} readOnly />
-              <div className="form-text">Auto-filled at submission</div>
+              <input
+                type="date"
+                className="form-control"
+                value={form.verificationDate}
+                readOnly={!isSubSO}
+                onChange={isSubSO ? (e) => setForm({ ...form, verificationDate: e.target.value }) : undefined}
+              />
+              <div className="form-text">{isSubSO ? 'Enter verified date (offline submission)' : "Auto-filled with today's date on submission"}</div>
             </div>
             <div className="col-md-3">
               <label className="form-label">Place *</label>
-              <input className="form-control" value={form.verificationPlace} readOnly placeholder="Auto from city" />
-              <div className="form-text">Auto-filled from professional city</div>
+              <input
+                className="form-control"
+                value={form.verificationPlace}
+                readOnly={!isSubSO}
+                placeholder={isSubSO ? 'Enter place' : 'Auto from city'}
+                onChange={isSubSO ? (e) => setForm({ ...form, verificationPlace: e.target.value }) : undefined}
+              />
+              <div className="form-text">{isSubSO ? 'Enter verified place' : 'Auto-filled from professional city'}</div>
             </div>
             <div className="col-md-4">
-              <FileUploadInput label="Upload Complainant Signature" hint={`${IMAGE_HINT}\nUploaded with duly signed.`}
-                accept=".png,.jpg,.jpeg" sizeMB={0.5} required preview type="signature"
+              <FileUploadInput
+                label={isSubSO ? 'Upload Complainant Signature (Optional)' : 'Upload Complainant Signature'}
+                hint={`${IMAGE_HINT}\n${isSubSO ? 'Optional for offline complaint submission.' : 'Uploaded with duly signed.'}`}
+                accept=".png,.jpg,.jpeg" sizeMB={0.5} required={!isSubSO} preview type="signature"
                 current={form.complaintantSignature} onUpload={(path) => setForm({ ...form, complaintantSignature: path })} />
             </div>
+            {isSubSO && (
+              <div className="col-md-5">
+                <FileUploadInput
+                  label="Upload Signed Form I Copy"
+                  hint="Upload signed Form I copy (PDF, JPG, PNG; max 10 MB)"
+                  accept=".pdf,.png,.jpg,.jpeg" sizeMB={10} type="other"
+                  current={form.signedFormICopy}
+                  onUpload={(path) => setForm({ ...form, signedFormICopy: path })} />
+              </div>
+            )}
           </div>
           <div className="d-flex justify-content-between align-items-end flex-wrap gap-3 mt-3">
             <p className="mb-0">
@@ -1719,6 +1977,7 @@ export default function FileComplaint() {
           </button>
         )}
       </div>
+      <form ref={gatewayFormRef} method="POST" style={{ display: 'none' }} />
     </div>
   );
 }

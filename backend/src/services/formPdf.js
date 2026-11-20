@@ -2,6 +2,7 @@ const fs = require('fs');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const { query } = require('../config/db');
 const { resolveDocumentPath } = require('./documents');
+const { buildDefectSheet } = require('./defectSheetPdf');
 const { statusText } = require('../utils/statusText');
 const A4 = [595.28, 841.89];
 const M = 45;
@@ -663,6 +664,17 @@ async function buildComplaintPdf(id, opts) {
         /* unsupported format - skip */
       }
     }
+  }
+
+  try {
+    const defectSheet = await buildDefectSheet(id, { includeAttachments: false, skipFooters: true });
+    if (defectSheet && defectSheet.data) {
+      const sheetSrc = await PDFDocument.load(defectSheet.data, { ignoreEncryption: true });
+      const sheetPages = await doc.copyPages(sheetSrc, sheetSrc.getPageIndices());
+      sheetPages.forEach((p) => doc.addPage(p));
+    }
+  } catch (defectSheetErr) {
+    console.error('merge defect sheet into form pdf error:', defectSheetErr.message);
   }
 
   // ---------- Page footers ----------

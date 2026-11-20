@@ -3,6 +3,7 @@ const { query, executeScalar, executeNonQuery } = require('../config/db');
 const { authMiddleware, generateOTP } = require('../services/auth');
 const { sendOTPEmail } = require('../services/mailer');
 const { buildComplaintPdf } = require('../services/formPdf');
+const { buildDefectSheet } = require('../services/defectSheetPdf');
 const { buildScrutinyPdf } = require('../services/scrutinyPdf');
 const { buildScrutinyDefaults } = require('../services/scrutinyDefaults');
 const {
@@ -296,7 +297,7 @@ function buildListQuery(filters, user) {
              TaxableAmount, IsStay, EmailID, MobileNo, ResMobileNo, ResProfAddress,
              Address, Landmark, Region, RStateName, RCityname, RelationName,
              AadharNo, GSTINNo, ResLandlineNo, FormType, NameofFirm, ResRegistrationNo,
-             ClubbedWithCompID, ClubbedWithCompNo, ClubRule, ClubbedAgainstCount
+             ClubbedWithCompID, ClubbedWithCompNo, ClubRule, ClubbedAgainstCount, PendingDefectCount
       FROM (
         SELECT nc.CompID, nc.CompNo, nc.ResName, nc.FirmNo, nc.IsFirm, nc.EntryDate, nc.StatusID,
                nc.TaxableAmount, nc.IsStay, nc.EmailID, nc.MobileNo, nc.ResMobileNo,
@@ -307,6 +308,14 @@ function buildListQuery(filters, user) {
                pc.CompNo AS ClubbedWithCompNo,
                (SELECT COUNT(*) FROM tbl_NewComplaint x
                  WHERE x.ClubbedWithCompID = nc.CompID AND (x.IsTemp IS NULL OR x.IsTemp=0)) AS ClubbedAgainstCount,
+               (SELECT COUNT(*) FROM tbl_ComplaintDefect d
+                 WHERE d.CompID = nc.CompID
+                   AND d.CompStatusID = (
+                     SELECT TOP 1 cs.CompStatusID FROM tbl_ComplaintStatus cs
+                     WHERE cs.CompaintID = nc.CompID AND cs.StatusID = 3
+                     ORDER BY cs.CompStatusID DESC
+                   )
+                   AND d.RespondedDate IS NULL) AS PendingDefectCount,
                sm.StatusName, ct.CompTypeName, u.NameOfTheUser AS ComplainantName,
                CAST(DATEDIFF(day, nc.EntryDate, GETDATE()) AS int) AS DaysSinceEntry,
                ROW_NUMBER() OVER (
@@ -836,6 +845,23 @@ router.get('/:id/form/pdf', async (req, res) => {
   }
 });
 
+router.get('/:id/defect-sheet/pdf', async (req, res) => {
+  try {
+    const access = await getComplaintAccess(req, req.params.id);
+    if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!(access.viewerIsInternal || access.directComplainant)) return res.status(403).json({ error: 'Not allowed' });
+    const out = await buildDefectSheet(req.params.id);
+    if (!out || !out.data) return res.status(404).json({ error: 'No defect sheet is available yet' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${out.filename}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(Buffer.from(out.data));
+  } catch (e) {
+    console.error('defect sheet pdf error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /**
  * GET /api/complaints/:id/compilation/pdf
  * Download the complaint compilation (Form A + status history + all documents) as a single PDF.
@@ -1101,7 +1127,15 @@ router.get('/lookup', async (req, res) => {
 // remarks and each defect is stored separately on the complaint.
 router.get('/defect-catalog', (req, res) => {
   res.json({
-    defects: getDefects().map((d) => ({ ...d, fieldTargets: getDefectFieldLabels(d.code) })),
+    defects: getDefects().map((d) => {
+      const targets = getDefectTargets(d.code);
+      return {
+        ...d,
+        fieldTargets: getDefectFieldLabels(d.code),
+        targetTexts: targets?.texts || [],
+        targetAttachments: targets?.attachments || [],
+      };
+    }),
     columns: FORM_I_COLUMNS,
   });
 });
@@ -1118,7 +1152,7 @@ router.get('/my-defect-responses', async (req, res) => {
        JOIN tbl_NewComplaint c ON c.CompID = d.CompID
        LEFT JOIN tbl_StatusMaster sm ON c.StatusID = sm.StatusID
        WHERE d.RespondedBy = @uid
-         AND (d.ResponseRemark IS NOT NULL OR d.ResponseAttachment IS NOT NULL)
+         AND (d.RespondedDate IS NOT NULL OR d.ResponseRemark IS NOT NULL OR d.ResponseAttachment IS NOT NULL)
        ORDER BY d.RespondedDate DESC, d.ComplaintDefectID DESC`,
       { uid: Number(req.user.UserID) }
     );
@@ -1184,10 +1218,15 @@ router.get('/:id', async (req, res) => {
            WHERE CompID=@id AND CompStatusID=@csid ORDER BY ComplaintDefectID`,
           { id, csid: Number(lastDefectStatus[0].CompStatusID) }
         );
-        defects = defectRows.map((defect) => ({
-          ...defect,
-          FieldTargets: getDefectFieldLabels(defect.DefectCode),
-        }));
+        defects = defectRows.map((defect) => {
+          const targets = getDefectTargets(defect.DefectCode);
+          return {
+            ...defect,
+            FieldTargets: getDefectFieldLabels(defect.DefectCode),
+            TargetTexts: targets?.texts || [],
+            TargetAttachments: targets?.attachments || [],
+          };
+        });
       }
     } catch (defectErr) {
       console.error('load complaint defects error:', defectErr.message);
@@ -2320,7 +2359,7 @@ router.put('/:id', async (req, res) => {
          MobileNo=@mobile, STDCode=@stdCode, LandlineNo=@landlineNo,
          Address=@address, Area=@area, Landmark=@landmark, AadharNo=@aadharNo,
          CompMembershipNo=@compMembershipNo,
-         AadharPhoto=@aadharPhoto, ComplaintantSignature=@signature, IdentityType=@identityType,
+         AadharPhoto=@aadharPhoto, ComplaintantSignature=@signature, SignedFormICopy=@signedFormICopy, IdentityType=@identityType,
          ResName=@resName, ResRegistrationNo=@resReg, ResCountryCode=@resCountry,
          ResMobileNo=@resMobile, ResSTDCode=@resStd, ResLandlineNo=@resLandline,
          ResProfAddress=@resProfAddr, ResCommAddress=@resCommAddr, ResEmailID=@resEmail,
@@ -2362,6 +2401,7 @@ router.put('/:id', async (req, res) => {
         compMembershipNo: b.compMembershipNo ?? cur.CompMembershipNo ?? null,
         aadharPhoto: b.aadharPhoto ?? cur.AadharPhoto ?? null,
         signature: b.complaintantSignature ?? cur.ComplaintantSignature ?? null,
+        signedFormICopy: b.signedFormICopy ?? cur.SignedFormICopy ?? null,
         identityType: b.identityType ?? cur.IdentityType ?? null,
         resName: b.resName ?? cur.ResName ?? null,
         resReg: b.isFirm ? null : b.resRegistrationNo || cur.ResRegistrationNo || null,
@@ -2834,6 +2874,18 @@ router.post('/:id/defects/respond', async (req, res) => {
     const byId = new Map(bodyResponses.map((response) => [Number(response.complaintDefectId), response]));
     const submitted = [];
     const fieldUpdates = {};
+    const allowedDefectColumns = new Set([
+      'IsFirm', 'NameofFirm', 'FirmNo', 'ResName', 'ResRegistrationNo',
+      'ResMobileNo', 'ResEmailID', 'ResCountryCode', 'ResSTDCode', 'ResLandlineNo',
+      'ResProfAddress', 'ResCommAddress', 'RStateID', 'RCityID', 'RStateName', 'RCityName', 'RCityname', 'RRegion', 'RComRegion',
+      'FirmProfStateID', 'FirmProfCityID', 'FirmProfAddress', 'FirmCommAddress',
+      'Name', 'EmailID', 'MobileNo', 'CountryCode', 'STDCode', 'LandlineNo',
+      'Address', 'Area', 'Landmark', 'Pincode', 'PinCode', 'StateID', 'CityID', 'Region',
+      'ParticularMisconduct', 'BriefStatement', 'BriefAttachment', 'MisconductAttachment',
+      'VerificationDate', 'VerificationTime', 'VerificationPlace', 'ComplaintantSignature',
+      'AadharNo', 'AadharPhoto', 'IdentityType', 'CompMembershipNo',
+      'RegulatorAttachment', 'PersonName',
+    ]);
 
     // Load the current Form I values once. Every defect response is audited
     // individually with the "before" value of each field it overwrites (text or
@@ -2844,9 +2896,14 @@ router.post('/:id/defects/respond', async (req, res) => {
 
     for (const defect of defects) {
       const response = byId.get(Number(defect.ComplaintDefectID)) || {};
-      const remark = String(response.remark || defect.ResponseRemark || '').trim();
+      let remark = String(response.remark || defect.ResponseRemark || '').trim();
       const attachment = String(response.attachment || defect.ResponseAttachment || '').trim();
-      if (!remark && !attachment) continue;
+      const fieldValues = (response.fieldValues && typeof response.fieldValues === 'object' && !Array.isArray(response.fieldValues))
+        ? response.fieldValues
+        : null;
+      const hasFieldValues = !!(fieldValues && Object.keys(fieldValues).length > 0);
+      if (!remark && !attachment && !hasFieldValues) continue;
+      if (!remark && !attachment && hasFieldValues) remark = 'Form I details updated.';
       await executeNonQuery(
         `UPDATE tbl_ComplaintDefect
          SET ResponseRemark=@remark,
@@ -2884,6 +2941,7 @@ router.post('/:id/defects/respond', async (req, res) => {
         defect: defect.DefectText,
         remark,
         attachment,
+        fieldValues: hasFieldValues ? fieldValues : undefined,
       });
 
       // Map the answer to the Form I field(s) the defect refers to, recording
@@ -2892,18 +2950,52 @@ router.post('/:id/defects/respond', async (req, res) => {
       const oldFieldValues = {};
       const newFieldValues = {};
       if (targets) {
-        if (remark) (targets.texts || []).forEach((col) => {
+        if (hasFieldValues) {
+          for (const [rawCol, rawVal] of Object.entries(fieldValues)) {
+            let col = rawCol;
+            if (col === 'ResProfessionalAddress') col = 'ResProfAddress';
+            if (col === 'RCityname') col = 'RCityName';
+            if (col === 'PinCode') col = 'Pincode';
+            if (!allowedDefectColumns.has(col)) continue;
+            let val = rawVal;
+            if (col === 'IsFirm') val = (val === 1 || val === '1' || val === true || String(val).toLowerCase() === 'firm') ? 1 : 0;
+            else if (val === undefined) val = null;
+            else if (typeof val === 'string') val = val.trim() === '' ? null : val.trim();
+            oldFieldValues[col] = runningValues[col] ?? null;
+            newFieldValues[col] = val;
+            fieldUpdates[col] = val;
+            runningValues[col] = val;
+          }
+        } else {
+          if (remark) (targets.texts || []).forEach((col) => {
+            oldFieldValues[col] = runningValues[col] ?? null;
+            newFieldValues[col] = remark;
+            fieldUpdates[col] = remark;
+            runningValues[col] = remark;
+          });
+          if (attachment) (targets.attachments || []).forEach((col) => {
+            oldFieldValues[col] = runningValues[col] ?? null;
+            newFieldValues[col] = attachment;
+            fieldUpdates[col] = attachment;
+            runningValues[col] = attachment;
+          });
+        }
+      } else if (hasFieldValues) {
+        for (const [rawCol, rawVal] of Object.entries(fieldValues)) {
+          let col = rawCol;
+          if (col === 'ResProfessionalAddress') col = 'ResProfAddress';
+          if (col === 'RCityname') col = 'RCityName';
+          if (col === 'PinCode') col = 'Pincode';
+          if (!allowedDefectColumns.has(col)) continue;
+          let val = rawVal;
+          if (col === 'IsFirm') val = (val === 1 || val === '1' || val === true || String(val).toLowerCase() === 'firm') ? 1 : 0;
+          else if (val === undefined) val = null;
+          else if (typeof val === 'string') val = val.trim() === '' ? null : val.trim();
           oldFieldValues[col] = runningValues[col] ?? null;
-          newFieldValues[col] = remark;
-          fieldUpdates[col] = remark;
-          runningValues[col] = remark;
-        });
-        if (attachment) (targets.attachments || []).forEach((col) => {
-          oldFieldValues[col] = runningValues[col] ?? null;
-          newFieldValues[col] = attachment;
-          fieldUpdates[col] = attachment;
-          runningValues[col] = attachment;
-        });
+          newFieldValues[col] = val;
+          fieldUpdates[col] = val;
+          runningValues[col] = val;
+        }
       }
 
       // One audit row per defect response - mapped or not - so the defect code,
@@ -2926,13 +3018,20 @@ router.post('/:id/defects/respond', async (req, res) => {
           attachment: attachment || null,
           ...newFieldValues,
         },
-        details: targets
+        details: (targets || hasFieldValues)
           ? `Defect ${defect.DefectCode} response recorded; Form I field(s) updated: ${Object.keys(newFieldValues).join(', ') || 'none'}.`
           : `Defect ${defect.DefectCode} response recorded (no Form I field mapped).`,
       });
     }
 
-    if (submitted.length === 0) {
+    const pendingRows = await query(
+      `SELECT COUNT(*) AS Pending FROM tbl_ComplaintDefect
+       WHERE CompID=@id AND CompStatusID=@csid
+         AND RespondedDate IS NULL`,
+      { id, csid: compStatusId }
+    );
+    const pending = Number(pendingRows[0]?.Pending || 0);
+    if (submitted.length === 0 && pending > 0) {
       return res.status(400).json({ error: 'Please respond to at least one defect.' });
     }
 
@@ -2974,14 +3073,6 @@ router.post('/:id/defects/respond', async (req, res) => {
       }
     }
 
-    const pendingRows = await query(
-      `SELECT COUNT(*) AS Pending FROM tbl_ComplaintDefect
-       WHERE CompID=@id AND CompStatusID=@csid
-         AND (ResponseRemark IS NULL OR LTRIM(RTRIM(ResponseRemark))='')
-         AND (ResponseAttachment IS NULL OR LTRIM(RTRIM(ResponseAttachment))='')`,
-      { id, csid: compStatusId }
-    );
-    const pending = Number(pendingRows[0]?.Pending || 0);
     if (pending > 0) {
       await writeAudit(req, {
         compId: id,
@@ -3627,7 +3718,7 @@ router.post('/', async (req, res) => {
     const result = await query(
       `INSERT INTO tbl_NewComplaint
         (ComplaintNo, CompType, Name, EmailID, CountryCode, MobileNo, STDCode, LandlineNo,
-         Address, Area, Landmark, AadharNo, CompMembershipNo, AadharPhoto, ComplaintantSignature, IdentityType,
+         Address, Area, Landmark, AadharNo, CompMembershipNo, AadharPhoto, ComplaintantSignature, SignedFormICopy, IdentityType,
          ResName, ResRegistrationNo, ResCountryCode, ResMobileNo, ResSTDCode, ResLandlineNo,
          ResProfAddress, ResCommAddress, ResEmailID,
          BriefStatement, BriefAttachment, ParticularMisconduct, MisconductAttachment,
@@ -3649,7 +3740,7 @@ router.post('/', async (req, res) => {
        OUTPUT INSERTED.CompID
        VALUES
         (@complaintNo, @compType, @name, @email, @countryCode, @mobile, @stdCode, @landlineNo,
-         @address, @area, @landmark, @aadharNo, @compMembershipNo, @aadharPhoto, @signature, @identityType,
+         @address, @area, @landmark, @aadharNo, @compMembershipNo, @aadharPhoto, @signature, @signedFormICopy, @identityType,
          @resName, @resReg, @resCountry, @resMobile, @resStd, @resLandline,
          @resProfAddr, @resCommAddr, @resEmail,
          @brief, @briefAttach, @misconduct, @misconductAttach,
@@ -3684,6 +3775,7 @@ router.post('/', async (req, res) => {
         compMembershipNo: b.compMembershipNo || null,
         aadharPhoto: b.aadharPhoto || null,
         signature: b.complaintantSignature || null,
+        signedFormICopy: b.signedFormICopy || null,
         identityType: b.identityType || null,
         resName: b.resName || null,
         resReg: b.isFirm ? null : b.resRegistrationNo || null,

@@ -46,6 +46,7 @@ app.use('/api/stay', require('./routes/stay'));
 app.use('/api/upload', require('./routes/upload'));
 app.use('/api/master-data', require('./routes/masterData'));
 app.use('/api/captcha', require('./routes/captcha'));
+app.use('/api/payment', require('./routes/payment'));
 
 // Documents — requires a valid token via Authorization header or the icai_token session cookie
 // (browser <a href="/documents/..."> clicks only send the cookie).
