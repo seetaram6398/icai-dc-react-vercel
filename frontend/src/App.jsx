@@ -10,6 +10,9 @@ import ComplaintList from './pages/ComplaintList';
 import ComplaintDetail from './pages/ComplaintDetail';
 import ComplaintWithdrawalUpdate from './pages/ComplaintWithdrawalUpdate';
 import FileComplaint from './pages/FileComplaint';
+import InformantRegister from './pages/InformantRegister';
+import InformantRegisterList from './pages/InformantRegisterList';
+import InformantDetail from './pages/InformantDetail';
 import MyComplaints from './pages/MyComplaints';
 import MyDefectResponses from './pages/MyDefectResponses';
 import AgendaList from './pages/AgendaList';
@@ -67,6 +70,9 @@ function App() {
         <Route path="bod-dashboard" element={<BODDashboard />} />
         <Route path="complaints" element={<ComplaintList />} />
         <Route path="complaints/:id" element={<ComplaintDetail />} />
+        <Route path="informant-register" element={<InformantRegisterList />} />
+        <Route path="informant-register/new" element={<InformantRegister />} />
+        <Route path="informant-register/:id" element={<InformantDetail />} />
         <Route path="my-complaints" element={<MyComplaints />} />
         <Route path="my-defect-responses" element={<MyDefectResponses />} />
         <Route path="withdrawal/update" element={<ComplaintWithdrawalUpdate />} />

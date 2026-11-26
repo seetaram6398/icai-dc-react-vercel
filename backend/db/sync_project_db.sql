@@ -56,6 +56,7 @@ INSERT @ExpectedColumns (TableName, ColumnName) VALUES
  (N'tbl_NewComplaint', N'VerificationTime'),
  (N'tbl_NewComplaint', N'IdentityType'),
  (N'tbl_NewComplaint', N'SignedFormICopy'),
+ (N'tbl_NewComplaint', N'IsInformant'),
  (N'tbl_ComplaintDefect', N'RelevantColumn'),
  (N'tbl_PaymentTransaction', N'OrderID'),
  (N'tbl_PaymentTransaction', N'CompID'),
@@ -76,7 +77,7 @@ INSERT @ExpectedObjects (ObjectName, ObjectType) VALUES
 
 DECLARE @ExpectedStatusIds TABLE (StatusID INT NOT NULL PRIMARY KEY);
 INSERT @ExpectedStatusIds (StatusID) VALUES
- (124), (125), (126), (127), (128), (129), (130), (131), (132), (133), (134);
+ (124), (125), (126), (127), (128), (129), (130), (131), (132), (133), (134), (135), (136), (137);
 
 DECLARE @ObjectDdl TABLE (ObjectName SYSNAME NOT NULL PRIMARY KEY, Ddl NVARCHAR(MAX) NULL);
 
@@ -201,6 +202,8 @@ BEGIN TRY
     ALTER TABLE dbo.tbl_NewComplaint ADD IdentityType NVARCHAR(30) NULL;
   IF COL_LENGTH(N'dbo.tbl_NewComplaint', N'SignedFormICopy') IS NULL
     ALTER TABLE dbo.tbl_NewComplaint ADD SignedFormICopy NVARCHAR(500) NULL;
+  IF COL_LENGTH(N'dbo.tbl_NewComplaint', N'IsInformant') IS NULL
+    ALTER TABLE dbo.tbl_NewComplaint ADD IsInformant BIT NOT NULL CONSTRAINT DF_tbl_NewComplaint_IsInformant DEFAULT (0);
 
   IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 124)
     INSERT INTO dbo.tbl_StatusMaster (StatusID, StatusName, DisplayOrder) VALUES (124, N'Recommendation to Working Officer', 124);
@@ -228,6 +231,15 @@ BEGIN TRY
   IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 134)
     INSERT INTO dbo.tbl_StatusMaster (StatusID, StatusName, DisplayOrder, SubStatus, MaxDays, CumulativeDays, UserTypeDD, UserTypeSO, StatusNameForAgenda)
     VALUES (134, N'Offline Complaint Submitted by Sub SO', 134, N'Under Scrutiny', NULL, NULL, NULL, N'5', N'Offline Complaint Submitted by Sub SO');
+  IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 135)
+    INSERT INTO dbo.tbl_StatusMaster (StatusID, StatusName, DisplayOrder, SubStatus, MaxDays, CumulativeDays, UserTypeDD, UserTypeSO, StatusNameForAgenda)
+    VALUES (135, N'Information Submitted by Info Sub SO', 135, N'Under Scrutiny', NULL, NULL, NULL, N'16', N'Information Submitted by Info Sub SO');
+  IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 136)
+    INSERT INTO dbo.tbl_StatusMaster (StatusID, StatusName, DisplayOrder, SubStatus, MaxDays, CumulativeDays, UserTypeDD, UserTypeSO, StatusNameForAgenda)
+    VALUES (136, N'Information Under Scrutiny by Info SO', 136, N'Under Scrutiny', NULL, NULL, NULL, N'16', N'Information Under Scrutiny by Info SO');
+  IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 137)
+    INSERT INTO dbo.tbl_StatusMaster (StatusID, StatusName, DisplayOrder, SubStatus, MaxDays, CumulativeDays, UserTypeDD, UserTypeSO, StatusNameForAgenda)
+    VALUES (137, N'Information Disposed', 137, NULL, NULL, NULL, NULL, N'16', N'Information Disposed');
 
   UPDATE dbo.tbl_StatusMaster SET StatusName = N'Recommendation to Director Discipline' WHERE StatusID = 5;
   UPDATE dbo.tbl_StatusMaster SET StatusName = N'Placed before Board of Discipline or Committee for clubbing decision' WHERE StatusID = 125;
@@ -247,6 +259,30 @@ BEGIN TRY
     END
     ELSE
       INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb) VALUES (14, N'Sub SO', N'014');
+  END;
+
+  IF NOT EXISTS (SELECT 1 FROM dbo.tbl_UserTypes WHERE UserTypeID = 15)
+  BEGIN
+    IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.tbl_UserTypes') AND name = N'UserTypeID' AND is_identity = 1)
+    BEGIN
+      SET IDENTITY_INSERT dbo.tbl_UserTypes ON;
+      INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb) VALUES (15, N'Info Sub SO', N'015');
+      SET IDENTITY_INSERT dbo.tbl_UserTypes OFF;
+    END
+    ELSE
+      INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb) VALUES (15, N'Info Sub SO', N'015');
+  END;
+
+  IF NOT EXISTS (SELECT 1 FROM dbo.tbl_UserTypes WHERE UserTypeID = 16)
+  BEGIN
+    IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.tbl_UserTypes') AND name = N'UserTypeID' AND is_identity = 1)
+    BEGIN
+      SET IDENTITY_INSERT dbo.tbl_UserTypes ON;
+      INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb) VALUES (16, N'Info SO', N'016');
+      SET IDENTITY_INSERT dbo.tbl_UserTypes OFF;
+    END
+    ELSE
+      INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb) VALUES (16, N'Info SO', N'016');
   END;
 
   DECLARE @obj SYSNAME;
@@ -304,7 +340,8 @@ SELECT CheckType = N'SEED STATUS',
 FROM @ExpectedStatusIds s
 UNION ALL
 SELECT CheckType = N'SEED USER TYPE',
-       ObjectName = N'UserTypeID=14',
-       Status = CASE WHEN EXISTS (SELECT 1 FROM dbo.tbl_UserTypes ut WHERE ut.UserTypeID = 14) THEN N'OK' ELSE N'MISSING' END,
+       ObjectName = N'UserTypeID=' + CAST(u.UserTypeID AS NVARCHAR(10)),
+       Status = CASE WHEN EXISTS (SELECT 1 FROM dbo.tbl_UserTypes ut WHERE ut.UserTypeID = u.UserTypeID) THEN N'OK' ELSE N'MISSING' END,
        Note = NULL
+FROM (SELECT 14 AS UserTypeID UNION ALL SELECT 15 UNION ALL SELECT 16) u
 ORDER BY CheckType, ObjectName;

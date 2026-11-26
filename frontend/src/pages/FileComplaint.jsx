@@ -217,7 +217,7 @@ function verificationParts(v) {
   };
 }
 
-export default function FileComplaint() {
+export default function FileComplaint({ informationMode = false }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
@@ -229,6 +229,7 @@ export default function FileComplaint() {
   // The complainant fields are entered here; on submit a complainant login is
   // created and the case is forwarded to the SO for the normal flow.
   const isSubSO = Number(user?.UserType) === 14;
+  const isInformant = informationMode || Number(user?.UserType) === 15;
   // End-user (public) complaints filed through this page are always recorded as
   // Form I (the legacy ?type=A link). Only the DD "Suo Moto" flow keeps Form A.
   const formType = isDD ? 'A' : 'I';
@@ -977,7 +978,7 @@ export default function FileComplaint() {
     const identityErr = validateIdentityNumber(form.identityType, form.aadharNo);
     if (identityErr) return identityErr;
     if (!form.aadharPhoto) return `Please upload ${identityTypeLabel(form.identityType)} Photo`;
-    if (!isSubSO && !form.complaintantSignature) return 'Please upload Complainant Signature';
+    if (!isSubSO && !isInformant && !form.complaintantSignature) return 'Please upload Complainant Signature';
 
     if (form.resType === 'member') {
       if (!form.resName) return 'Please enter Respondent Name';
@@ -1029,7 +1030,7 @@ export default function FileComplaint() {
     if (scheduleList.length === 0) return 'Please add at least one allegation / misconduct';
 
     const isGovType = GOV_COMP_TYPE_LABELS.includes(ctLabel);
-    if (!isGovType) {
+    if (!isGovType && !isInformant) {
       if (!form.paymentMode) return 'Please select Mode of Payment';
       if (!form.paymentDate) return 'Please enter Payment Date';
       if (isFutureDate(form.paymentDate)) return 'Payment Date cannot be in the future';
@@ -1047,7 +1048,7 @@ export default function FileComplaint() {
     }
     if (docs.length === 0) return 'Please provide at least one document/evidence';
     if (!String(form.verificationDate || '').trim()) return 'Please enter Verification Date';
-    if (!isSubSO && isFutureDate(form.verificationDate)) return 'Verification Date cannot be in the future';
+    if (!isSubSO && !isInformant && isFutureDate(form.verificationDate)) return 'Verification Date cannot be in the future';
     if (!String(form.verificationPlace || '').trim()) return 'Please enter Verification Place';
     return null;
   };
@@ -1085,11 +1086,12 @@ export default function FileComplaint() {
         schedules: scheduleList,
         answerableMembers,
         isChkSameAddress: form.isChkSameAddress,
-        verificationDate: isSubSO ? T(form.verificationDate) : toDateInput(submittedAt),
-        verificationTime: isSubSO ? T(form.verificationTime) : currentTimeText(submittedAt),
+        verificationDate: isSubSO || isInformant ? T(form.verificationDate) : toDateInput(submittedAt),
+        verificationTime: isSubSO || isInformant ? T(form.verificationTime) : currentTimeText(submittedAt),
         verificationPlace: T(form.verificationPlace) || verificationCityLabel,
         declaration: true,
         isFirm: form.resType === 'firm',
+        isInformant,
       };
       for (const k of ['stateId', 'cityId', 'resStateId', 'resCityId', 'firmProfStateId', 'firmProfCityId']) {
         payload[k] = /^\d+$/.test(String(payload[k] || '').trim()) ? String(payload[k]).trim() : '';
@@ -1098,7 +1100,7 @@ export default function FileComplaint() {
       // submitted and is not auto-assigned to an SO until Submit is clicked.
       // Offline complaints are always submitted in one step (no draft) because
       // the complainant login is created during submission.
-      const saveAsDraft = preview && !isSubSO;
+      const saveAsDraft = preview && !isSubSO && !isInformant;
       const savePayload = { ...payload, isDraft: saveAsDraft };
       let data;
       if (isEdit) {
@@ -1119,6 +1121,9 @@ export default function FileComplaint() {
             ? `Complaint ${data.CompNo || editId} submitted successfully`
             : 'Complaint updated and sent to SO successfully');
           navigate(`/complaints/${data.CompID || editId}`);
+        } else if (isInformant) {
+          popup.success(`Information ${data.CompNo} submitted and forwarded to the Info SO.`);
+          navigate(`/informant-register/${data.CompID}`);
         } else if (isSubSO) {
           popup.success(
             `Offline complaint ${data.CompNo} submitted and forwarded to the SO. ` +
@@ -1184,9 +1189,11 @@ export default function FileComplaint() {
 
   const goBack = () => navigate(-1);
 
-  const formTitle = isGovEmp
-    ? 'Filing disciplinary complaint accompanied with investigation report by Government/its agencies'
-    : 'Filing disciplinary complaint by Private Individual/Company/Firm';
+  const formTitle = isInformant
+    ? 'Filing information before the Disciplinary Directorate'
+    : (isGovEmp
+      ? 'Filing disciplinary complaint accompanied with investigation report by Government/its agencies'
+      : 'Filing disciplinary complaint by Private Individual/Company/Firm');
 
   const ctLabel = compTypes.find((c) => String(c.value) === String(form.compTypeId))?.label || '';
   const isGovType = GOV_COMP_TYPE_LABELS.includes(ctLabel);
@@ -1202,34 +1209,38 @@ export default function FileComplaint() {
         <button className="btn btn-outline-secondary me-3 btn-sm" onClick={goBack}><i className="bi bi-arrow-left"></i></button>
         <div>
           <h4 className="mb-0">
-            {isDraftComplaint
-              ? 'Draft Complaint'
-              : isEdit
-                ? 'Edit Complaint'
-                : isSubSO ? 'Register Offline Complaint' : 'Register New Complaint'}
-            <span className="fw-bold ms-2" style={{ fontSize: '0.99rem' }}>(FORM {formType})</span>
+            {isInformant
+              ? 'Register Information'
+              : (isDraftComplaint
+                ? 'Draft Complaint'
+                : isEdit
+                  ? 'Edit Complaint'
+                  : isSubSO ? 'Register Offline Complaint' : 'Register New Complaint')}
+            {!isInformant && <span className="fw-bold ms-2" style={{ fontSize: '0.99rem' }}>(FORM {formType})</span>}
           </h4>
-          {isDraftComplaint
-            ? <small className="text-muted">This complaint is saved as a draft. Update the details below and click Submit Complaint when ready. It will be treated as submitted, and assigned to the SO, only after you submit it.</small>
-            : isEdit
-              ? <small className="text-muted">Modify all complaint details using the complaint submission form. The updated complaint will be sent to the SO for re-scrutiny.</small>
-              : isSubSO
-                ? <small className="text-muted">Enter the complainant's details below. On submit, a complainant login is created, the case is marked as an offline submission, and it is forwarded to the SO for scrutiny.</small>
-                : (!isDD && <small className="text-muted">{formTitle}</small>)}
+          {isInformant
+            ? <small className="text-muted">Enter the informant's details below. On submit, the information is forwarded to the Info SO for scrutiny.</small>
+            : (isDraftComplaint
+              ? <small className="text-muted">This complaint is saved as a draft. Update the details below and click Submit Complaint when ready. It will be treated as submitted, and assigned to the SO, only after you submit it.</small>
+              : isEdit
+                ? <small className="text-muted">Modify all complaint details using the complaint submission form. The updated complaint will be sent to the SO for re-scrutiny.</small>
+                : isSubSO
+                  ? <small className="text-muted">Enter the complainant's details below. On submit, a complainant login is created, the case is marked as an offline submission, and it is forwarded to the SO for scrutiny.</small>
+                  : (!isDD && <small className="text-muted">{formTitle}</small>))}
         </div>
       </div>
 
       {/* ===== PARTICULARS OF COMPLAINANT / INFORMATION ===== */}
       <div className="card mb-3">
-        <div className="card-header bg-primary text-white fw-semibold"><i className="bi bi-person me-2"></i>Particulars of the Complaint/Information</div>
+        <div className="card-header bg-primary text-white fw-semibold"><i className="bi bi-person me-2"></i>{isInformant ? 'Particulars of the Information' : 'Particulars of the Complaint/Information'}</div>
         <div className="card-body">
           <div className="mb-3">
-            <span className="badge bg-dark text-uppercase me-2">Form {formType}</span>
+            <span className="badge bg-dark text-uppercase me-2">{isInformant ? 'Information' : `Form ${formType}`}</span>
             <span className="text-muted small">{formTitle}</span>
           </div>
           <div className="row g-3">
             <div className="col-md-4">
-              <label className="form-label">Type of Complaint *</label>
+              <label className="form-label">{isInformant ? 'Type of Information *' : 'Type of Complaint *'}</label>
               <select className="form-select" value={form.compTypeId} onChange={onCompTypeChange} disabled={isEdit}>
                 <option value="">--Select--</option>
                 {compTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -1784,7 +1795,12 @@ export default function FileComplaint() {
         </div>
       </div>
 
-      {/* ===== PAYMENT DETAILS ===== */}
+      {isInformant ? (
+        <div className="card mb-3">
+          <div className="card-header bg-secondary text-white fw-semibold"><i className="bi bi-info-circle me-2"></i>Fee Details</div>
+          <div className="card-body"><p className="text-muted mb-0">Fee Not Applicable for information records.</p></div>
+        </div>
+      ) : (
       <div className="card mb-3">
         <div className="card-header bg-success text-white fw-semibold d-flex justify-content-between align-items-center">
           <span><i className="bi bi-credit-card me-2"></i>Payment Details</span>
@@ -1873,6 +1889,7 @@ export default function FileComplaint() {
           )}
         </div>
       </div>
+      )}
 
       {/* ===== DOCUMENT / EVIDENCE ===== */}
       <div className="card mb-3">
@@ -1909,7 +1926,7 @@ export default function FileComplaint() {
         <div className="card-header bg-primary text-white fw-semibold"><i className="bi bi-patch-check me-2"></i>Verification</div>
         <div className="card-body">
           <p className="mb-3">
-            I, <strong>{form.name || '________________'}</strong>, the complainant, do hereby declare that what is stated above is true to the best of my information and belief.
+            I, <strong>{form.name || '________________'}</strong>, the {isInformant ? 'informant' : 'complainant'}, do hereby declare that what is stated above is true to the best of my information and belief.
           </p>
           <div className="row g-3">
             <div className="col-md-3">
@@ -1918,30 +1935,30 @@ export default function FileComplaint() {
                 type="date"
                 className="form-control"
                 value={form.verificationDate}
-                readOnly={!isSubSO}
-                onChange={isSubSO ? (e) => setForm({ ...form, verificationDate: e.target.value }) : undefined}
+                readOnly={!isSubSO && !isInformant}
+                onChange={isSubSO || isInformant ? (e) => setForm({ ...form, verificationDate: e.target.value }) : undefined}
               />
-              <div className="form-text">{isSubSO ? 'Enter verified date (offline submission)' : "Auto-filled with today's date on submission"}</div>
+              <div className="form-text">{isSubSO || isInformant ? 'Enter verified date' : "Auto-filled with today's date on submission"}</div>
             </div>
             <div className="col-md-3">
               <label className="form-label">Place *</label>
               <input
                 className="form-control"
                 value={form.verificationPlace}
-                readOnly={!isSubSO}
-                placeholder={isSubSO ? 'Enter place' : 'Auto from city'}
-                onChange={isSubSO ? (e) => setForm({ ...form, verificationPlace: e.target.value }) : undefined}
+                readOnly={!isSubSO && !isInformant}
+                placeholder={isSubSO || isInformant ? 'Enter place' : 'Auto from city'}
+                onChange={isSubSO || isInformant ? (e) => setForm({ ...form, verificationPlace: e.target.value }) : undefined}
               />
-              <div className="form-text">{isSubSO ? 'Enter verified place' : 'Auto-filled from professional city'}</div>
+              <div className="form-text">{isSubSO || isInformant ? 'Enter verified place' : 'Auto-filled from professional city'}</div>
             </div>
             <div className="col-md-4">
               <FileUploadInput
-                label={isSubSO ? 'Upload Complainant Signature (Optional)' : 'Upload Complainant Signature'}
-                hint={`${IMAGE_HINT}\n${isSubSO ? 'Optional for offline complaint submission.' : 'Uploaded with duly signed.'}`}
-                accept=".png,.jpg,.jpeg" sizeMB={0.5} required={!isSubSO} preview type="signature"
+                label={isSubSO || isInformant ? 'Upload Informant Signature (Optional)' : 'Upload Complainant Signature'}
+                hint={`${IMAGE_HINT}\n${isSubSO || isInformant ? 'Optional for offline submission.' : 'Uploaded with duly signed.'}`}
+                accept=".png,.jpg,.jpeg" sizeMB={0.5} required={!isSubSO && !isInformant} preview type="signature"
                 current={form.complaintantSignature} onUpload={(path) => setForm({ ...form, complaintantSignature: path })} />
             </div>
-            {isSubSO && (
+            {isSubSO && !isInformant && (
               <div className="col-md-5">
                 <FileUploadInput
                   label="Upload Signed Form I Copy"
@@ -1958,7 +1975,7 @@ export default function FileComplaint() {
             </p>
             <div className="text-center">
               <ImagePreview src={form.complaintantSignature} width={150} height={60} placeholder="Signature" />
-              <div className="small fw-semibold mt-1">Signature of Complainant</div>
+              <div className="small fw-semibold mt-1">Signature of {isInformant ? 'Informant' : 'Complainant'}</div>
             </div>
           </div>
         </div>
@@ -1969,9 +1986,9 @@ export default function FileComplaint() {
         <button className="btn btn-primary btn-lg" disabled={busy} onClick={() => handleSubmit(false)} type="button">
           {busy
             ? <><span className="spinner-border spinner-border-sm me-2"></span>Submitting...</>
-            : <><i className="bi bi-send me-2"></i>{isEdit && !isDraftComplaint ? 'Submit Edited Complaint' : isSubSO ? 'Submit Offline Complaint' : 'Submit Complaint'}</>}
+            : <><i className="bi bi-send me-2"></i>{isInformant ? 'Submit Information' : (isEdit && !isDraftComplaint ? 'Submit Edited Complaint' : isSubSO ? 'Submit Offline Complaint' : 'Submit Complaint')}</>}
         </button>
-        {!isEdit && !isSubSO && (
+        {!isEdit && !isSubSO && !isInformant && (
           <button className="btn btn-outline-secondary btn-lg" disabled={busy} onClick={() => handleSubmit(true)} type="button">
             <i className="bi bi-eye me-2"></i>Preview Complaint
           </button>

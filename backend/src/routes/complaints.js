@@ -35,21 +35,49 @@ router.use(authMiddleware);
 // The Sub SO only files offline complaints and views the ones they filed. Once
 // submitted, the regular SO / scrutiny / closure flow owns the complaint.
 router.use((req, res, next) => {
-  if (Number(req.user.UserType) !== 14) return next();
-  const isSubmit = req.method === 'POST' && req.path === '/';
-  if (req.method === 'GET' || req.method === 'HEAD' || isSubmit) return next();
-  return res.status(403).json({ error: 'Sub SO can only submit and view offline complaints' });
+  const ut = Number(req.user.UserType);
+  if (ut === 14) {
+    const isSubmit = req.method === 'POST' && req.path === '/';
+    if (req.method === 'GET' || req.method === 'HEAD' || isSubmit) return next();
+    return res.status(403).json({ error: 'Sub SO can only submit and view offline complaints' });
+  }
+  if (ut === 15) {
+    const isSubmit = req.method === 'POST' && req.path === '/';
+    if (req.method === 'GET' || req.method === 'HEAD' || isSubmit) return next();
+    return res.status(403).json({ error: 'Info Sub SO can only submit and view information records' });
+  }
+  if (ut === 16) {
+    const isStatusChange = req.method === 'POST' && /^\/\d+\/status$/.test(req.path);
+    if (req.method === 'GET' || req.method === 'HEAD' || isStatusChange) return next();
+    return res.status(403).json({ error: 'Info SO can only review and update information records' });
+  }
+  return next();
 });
 
 async function getComplaintAccess(req, id) {
   try {
-    const rows = await query('SELECT CompID, UserID, ResEmailID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    const rows = await query('SELECT CompID, UserID, ResEmailID, ClubbedWithCompID, IsInformant FROM tbl_NewComplaint WHERE CompID=@id', { id });
     if (rows.length === 0) return { allowed: false, reason: 'Complaint not found' };
     const c = rows[0];
+    const isInfoRecord = Number(c.IsInformant) === 1;
+    const ut = Number(req.user.UserType);
+    if (isInfoRecord && ![1, 15, 16].includes(ut)) {
+      return { allowed: false, reason: 'You are not authorised to view this information record' };
+    }
+    if (!isInfoRecord && INFORMATION_ROLES.includes(ut)) {
+      return { allowed: false, reason: 'Info users can only access information records' };
+    }
+    if (isInfoRecord && ut === 15) {
+      const own = await query(
+        'SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus WHERE CompaintID=@id AND UserID=@uid',
+        { id, uid: Number(req.user.UserID) }
+      );
+      if (!own.length) return { allowed: false, reason: 'You are not authorised to view this information record' };
+    }
     const answerable = await query('SELECT * FROM tbl_AnswerableMember WHERE CompID=@id', { id });
     let viewerRole = resolvePartyRole(req.user, c, answerable);
     const directComplainant = viewerRole === 'complainant';
-    const viewerIsInternal = isInternalUser(req.user) && !viewerRole;
+    const viewerIsInternal = isInfoRecord ? true : (isInternalUser(req.user) && !viewerRole);
     if (!viewerIsInternal && !viewerRole) {
       const clubbedParty = isClubbedComplainant(req.user, c) ||
         (await query(
@@ -63,6 +91,11 @@ async function getComplaintAccess(req, id) {
   } catch (e) {
     return { allowed: false, reason: 'Server error' };
   }
+}
+
+async function isInformantRecord(id) {
+  const rows = await query('SELECT IsInformant FROM tbl_NewComplaint WHERE CompID=@id', { id });
+  return rows.length > 0 && Number(rows[0].IsInformant) === 1;
 }
 
 function normalizeCustomDefects(customDefects) {
@@ -116,14 +149,31 @@ async function saveComplaintDefects({ compId, compStatusId, defects, userId }) {
 //   69 - Recommendation to Committee from DD, 123 - Clubbing Case Communicated,
 //   13 - Closure communicated, 14 - Closed, 130 - Withdrawal permitted.
 const CLUBBED_OR_CLOSED_STATUSES = [13, 14, 66, 68, 69, 123, 130];
+const INFORMATION_ROLES = [15, 16];
+const INFORMATION_SUBMITTED_STATUS = 135;
+const INFORMATION_UNDER_SCRUTINY_STATUS = 136;
+const INFORMATION_DISPOSED_STATUS = 137;
+const INFORMATION_STATUSES = [
+  INFORMATION_SUBMITTED_STATUS,
+  INFORMATION_UNDER_SCRUTINY_STATUS,
+  INFORMATION_DISPOSED_STATUS,
+];
 
 // Helper: generate complaint number (mirrors original GetComplaintNo + PR/G/... formatting)
-async function generateComplaintNo(isGov, year) {
-  const r = await executeScalar(
-    'SELECT ISNULL(MAX(CAST(ComplaintNo AS int)), 0) + 1 FROM tbl_NewComplaint WHERE Year=@year',
-    { year }
-  );
+async function generateComplaintNo(isGov, year, isInformant = false) {
+  const r = isInformant
+    ? await executeScalar(
+        'SELECT ISNULL(MAX(CAST(ComplaintNo AS int)), 0) + 1 FROM tbl_NewComplaint WHERE Year=@year AND IsInformant=1',
+        { year }
+      )
+    : await executeScalar(
+        'SELECT ISNULL(MAX(CAST(ComplaintNo AS int)), 0) + 1 FROM tbl_NewComplaint WHERE Year=@year AND ISNULL(IsInformant, 0) = 0',
+        { year }
+      );
   const next = Number(r) || 1;
+  if (isInformant) {
+    return { compNo: `PPR/${String(next).padStart(2, '0')}/${year}`, complaintNo: next };
+  }
   const padded = String(next).padStart(3, '0');
   const compNo = `PR/${isGov ? 'G/' : ''}${padded}/${year}`;
   return { compNo, complaintNo: padded };
@@ -151,10 +201,37 @@ async function resolveFixedSO() {
          SELECT cs.UserToID, COUNT(*) AS open_count
          FROM tbl_ComplaintStatus cs
          WHERE cs.StatusID IN (2, 4, 53, 66)
-           AND cs.CompaintID IN (SELECT CompID FROM tbl_NewComplaint)
+           AND cs.CompaintID IN (SELECT CompID FROM tbl_NewComplaint WHERE ISNULL(IsInformant, 0) = 0)
          GROUP BY cs.UserToID
        ) t ON t.UserToID = u.UserID
        WHERE u.UserType = 5 AND u.IsDeactivated = 0
+       ORDER BY ISNULL(t.open_count, 0) ASC, u.UserID ASC`
+    );
+  }
+  return rows.length ? Number(rows[0].UserID) : null;
+}
+
+async function resolveFixedInfoSO() {
+  const fixedEmail = (process.env.FIXED_INFO_SO_EMAIL || '').trim().toLowerCase();
+  let rows = null;
+  if (fixedEmail) {
+    rows = await query(
+      'SELECT UserID FROM tbl_Users WHERE UserType=16 AND LOWER(LTRIM(RTRIM(Email)))=@email AND IsDeactivated=0',
+      { email: fixedEmail }
+    );
+  }
+  if (!rows || rows.length === 0) {
+    rows = await query(
+      `SELECT TOP 1 u.UserID
+       FROM tbl_Users u
+       LEFT JOIN (
+         SELECT cs.UserToID, COUNT(*) AS open_count
+         FROM tbl_ComplaintStatus cs
+         WHERE cs.StatusID=${INFORMATION_UNDER_SCRUTINY_STATUS}
+           AND cs.CompaintID IN (SELECT CompID FROM tbl_NewComplaint WHERE IsInformant=1)
+         GROUP BY cs.UserToID
+       ) t ON t.UserToID = u.UserID
+       WHERE u.UserType = 16 AND u.IsDeactivated = 0
        ORDER BY ISNULL(t.open_count, 0) ASC, u.UserID ASC`
     );
   }
@@ -290,16 +367,16 @@ async function ensureComplainantUserForSubSO(party = {}) {
 // then all filters are applied on the deduped set — exactly like the dashboard —
 // so Dashboard counts always match what the complaint window displays.
 function buildListQuery(filters, user) {
-  const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, compIds } = filters;
+  const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, compIds, informationScope } = filters;
   let sqlStr = `
-      SELECT CompID, CompNo, ResName, FirmNo, IsFirm, EntryDate, StatusID,
+      SELECT CompID, CompNo, IsInformant, ResName, FirmNo, IsFirm, EntryDate, StatusID,
              StatusName, CompTypeName, ComplainantName, DaysSinceEntry,
              TaxableAmount, IsStay, EmailID, MobileNo, ResMobileNo, ResProfAddress,
              Address, Landmark, Region, RStateName, RCityname, RelationName,
              AadharNo, GSTINNo, ResLandlineNo, FormType, NameofFirm, ResRegistrationNo,
              ClubbedWithCompID, ClubbedWithCompNo, ClubRule, ClubbedAgainstCount, PendingDefectCount
       FROM (
-        SELECT nc.CompID, nc.CompNo, nc.ResName, nc.FirmNo, nc.IsFirm, nc.EntryDate, nc.StatusID,
+        SELECT nc.CompID, nc.CompNo, nc.IsInformant, nc.ResName, nc.FirmNo, nc.IsFirm, nc.EntryDate, nc.StatusID,
                nc.TaxableAmount, nc.IsStay, nc.EmailID, nc.MobileNo, nc.ResMobileNo,
                nc.ResProfAddress, nc.Address, nc.Landmark, nc.Region, nc.RStateName,
                nc.RCityname, nc.RelationName, nc.AadharNo, nc.GSTINNo, nc.ResLandlineNo,
@@ -330,6 +407,13 @@ function buildListQuery(filters, user) {
         WHERE nc.IsTemp IS NULL OR nc.IsTemp = 0) t`;
   const params = {};
   const conds = [];
+  const userType = Number(user.UserType);
+
+  if (INFORMATION_ROLES.includes(userType) || (userType === 1 && informationScope === 'information')) {
+    conds.push('t.IsInformant = 1');
+  } else {
+    conds.push('ISNULL(t.IsInformant, 0) = 0');
+  }
 
   let ids = statusIds ? String(statusIds).split(',').map(Number).filter(Boolean) : [];
   if (Number(user.UserType) === 10 && !ids.length) {
@@ -371,7 +455,7 @@ function buildListQuery(filters, user) {
   // Sub SO (UserType 14) only sees the offline complaints they filed, not the
   // whole internal register. The offline submission row is recorded with their
   // UserID, so it identifies every case they forwarded to an SO.
-  if (Number(user.UserType) === 14) {
+  if (userType === 14 || userType === 15) {
     conds.push(`t.CompID IN (SELECT CompaintID FROM tbl_ComplaintStatus WHERE UserID=@ownUserId)`);
     params.ownUserId = Number(user.UserID);
   }
@@ -465,8 +549,8 @@ async function resolveSOFromStatement(compId) {
  */
 router.get('/', async (req, res) => {
   try {
-    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending } = req.query;
-    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo };
+    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending, informationScope } = req.query;
+    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, informationScope };
     if (actionPending === '1' || actionPending === 'true') {
       filters.compIds = await findPartyActionPendingIds(req.user);
     }
@@ -485,36 +569,59 @@ router.get('/', async (req, res) => {
  */
 router.get('/export', async (req, res) => {
   try {
-    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending } = req.query;
-    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo };
+    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending, informationScope } = req.query;
+    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, informationScope };
     if (actionPending === '1' || actionPending === 'true') {
       filters.compIds = await findPartyActionPendingIds(req.user);
     }
     const { sqlStr, params } = buildListQuery(filters, req.user);
     const rows = await query(sqlStr, params);
+    const isInformationExport = INFORMATION_ROLES.includes(Number(req.user.UserType)) || informationScope === 'information';
 
-    const header = [
-      'Complaint No',
-      'Type of Respondent',
-      'Complainant Name',
-      'Complainant Email',
-      'Complainant Mobile',
-      'Respondent Name/Firm Name',
-      'Respondent Mobile',
-      'Respondent Professional Address',
-      'Fee Paid (TaxableAmount)',
-      'Current Status',
-      'Is Stay',
-      'Date of Receipt of Complaint (dd/MM/yyyy)',
-      'Address',
-      'Landmark',
-      'Region',
-      'Respondent State',
-      'Respondent City',
-      'Relation Name',
-      'Aadhar No',
-      'GSTIN No',
-    ];
+    const header = isInformationExport
+      ? [
+          'Information No',
+          'Type of Respondent',
+          'Informant Name',
+          'Informant Email',
+          'Informant Mobile',
+          'Respondent Name/Firm Name',
+          'Respondent Mobile',
+          'Respondent Professional Address',
+          'Current Status',
+          'Is Stay',
+          'Date of Receipt of Information (dd/MM/yyyy)',
+          'Address',
+          'Landmark',
+          'Region',
+          'Respondent State',
+          'Respondent City',
+          'Relation Name',
+          'Aadhar No',
+          'GSTIN No',
+        ]
+      : [
+          'Complaint No',
+          'Type of Respondent',
+          'Complainant Name',
+          'Complainant Email',
+          'Complainant Mobile',
+          'Respondent Name/Firm Name',
+          'Respondent Mobile',
+          'Respondent Professional Address',
+          'Fee Paid (TaxableAmount)',
+          'Current Status',
+          'Is Stay',
+          'Date of Receipt of Complaint (dd/MM/yyyy)',
+          'Address',
+          'Landmark',
+          'Region',
+          'Respondent State',
+          'Respondent City',
+          'Relation Name',
+          'Aadhar No',
+          'GSTIN No',
+        ];
     const columns = [
       'CompNo',
       'CompTypeName',
@@ -524,7 +631,7 @@ router.get('/export', async (req, res) => {
       'ResName',
       'ResMobileNo',
       'ResProfAddress',
-      'TaxableAmount',
+      ...(isInformationExport ? [] : ['TaxableAmount']),
       'StatusName',
       'IsStay',
       'EntryDate',
@@ -550,7 +657,7 @@ router.get('/export', async (req, res) => {
       lines.push(columns.map((c) => esc(r, c)).join(','));
     }
 
-    const filename = `Complaint_Data_${new Date().toISOString().slice(0, 10)}.csv`;
+    const filename = `${isInformationExport ? 'Information' : 'Complaint'}_Data_${new Date().toISOString().slice(0, 10)}.csv`;
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     res.send('\uFEFF' + lines.join('\r\n'));
@@ -599,6 +706,7 @@ async function buildDownloadDoc(id, kind, origin) {
   );
   if (rows.length === 0) return null;
   const c = rows[0];
+  const isInformation = Number(c.IsInformant) === 1;
   const isFirm = Number(c.IsFirm) === 1;
 
   let history = [];
@@ -659,14 +767,14 @@ async function buildDownloadDoc(id, kind, origin) {
 
   // ----- Document assembly -----
   const genericInfo =
-    fr([fc('Complaint No.', val(c.CompNo)), fc('Form Type', val(c.FormType)), fc('Complaint Type', val(c.CompTypeName)), fc('Status', val(statusText(c.StatusName)))]) +
+    fr([fc(isInformation ? 'Information No.' : 'Complaint No.', val(c.CompNo)), fc(isInformation ? 'Record Type' : 'Form Type', val(c.FormType)), fc(isInformation ? 'Information Type' : 'Complaint Type', val(c.CompTypeName)), fc('Status', val(statusText(c.StatusName)))]) +
     (c.ComplainantName
       ? fr([fc('Filed By', val(c.ComplainantName)), fc('Entry Date', val(c.EntryDate ? new Date(c.EntryDate).toLocaleDateString('en-GB') : '')), fc('', ''), fc('', '')])
       : '');
 
   const secI = section(
-    'I. Particulars of the Complaint / Information',
-    fr([fc('Type of Complaint', val(c.CompTypeName)), fc('Name', val(c.Name)), fc('Email ID', val(c.EmailID))]) +
+    isInformation ? 'I. Particulars of the Information' : 'I. Particulars of the Complaint / Information',
+    fr([fc(isInformation ? 'Type of Information' : 'Type of Complaint', val(c.CompTypeName)), fc('Name', val(c.Name)), fc('Email ID', val(c.EmailID))]) +
     (isIndividual
       ? fr([fc('S/D/O', val(c.Salutation)), fc('Relation Name', val(c.RelationName)), fc('', '')])
       : fr([fc('Regulator', val(c.RegulatorNameMaster)), fc('Name of Regulator', val(c.RegulatorName)), fc('Designation', val(c.RegulatorDesignation))]) +
@@ -676,7 +784,7 @@ async function buildDownloadDoc(id, kind, origin) {
     fr([fc('Flat, House no., Building, Company, Apartment', val(c.Address)), fc('Area, Street, Sector, Village', val(c.Area)), fc('Landmark', val(c.Landmark))]) +
     fr([fc('State', val(c.ComplainantStateName)), fc('City', val(c.ComplainantCityName)), fc('Pincode', val(c.PinCode))]) +
     fr([fc('Region', val(c.Region)), fc(({ PAN: 'PAN No.', AADHAAR: 'Aadhaar No.', VOTER_ID: 'Voter ID No.', PASSPORT: 'Passport No.', DRIVING_LICENCE: 'Driving Licence No.', OTHER: 'Identity No.' }[c.IdentityType] || 'Identity No.'), val(c.AadharNo)), fc('', '')]) +
-    fr([fc(imgCell(c.AadharPhoto, (({ PAN: 'PAN Card', AADHAAR: 'Aadhaar Card', VOTER_ID: 'Voter ID Card', PASSPORT: 'Passport', DRIVING_LICENCE: 'Driving Licence', OTHER: 'Identity Proof' }[c.IdentityType] || 'Identity Proof') + ' Photo'))), fc(imgCell(c.ComplaintantSignature, 'Complainant Signature')), fc('')])
+    fr([fc(imgCell(c.AadharPhoto, (({ PAN: 'PAN Card', AADHAAR: 'Aadhaar Card', VOTER_ID: 'Voter ID Card', PASSPORT: 'Passport', DRIVING_LICENCE: 'Driving Licence', OTHER: 'Identity Proof' }[c.IdentityType] || 'Identity Proof') + ' Photo'))), fc(imgCell(c.ComplaintantSignature, isInformation ? 'Informant Signature' : 'Complainant Signature')), fc('')])
   );
 
   const secII = section(
@@ -707,7 +815,7 @@ async function buildDownloadDoc(id, kind, origin) {
   }
 
   const secIV = section(
-    'IV. Particulars of Complaint',
+    isInformation ? 'IV. Particulars of Information' : 'IV. Particulars of Complaint',
     fr([fc('Brief Fact Statement', `${h(c.BriefStatement || '')} ${docAnchor(c.BriefAttachment, 'View Brief Fact Statement')}`)]) +
     fr([fc('Particular of Misconduct', `${h(c.ParticularMisconduct || '')} ${docAnchor(c.MisconductAttachment, 'View Particular of Misconduct')}`)])
   );
@@ -730,7 +838,9 @@ async function buildDownloadDoc(id, kind, origin) {
       schedules.map((s) => [val(s.ScheduleName), val(s.PartNo), val(s.ItemName), val(s.Miscondate ? fmtD(s.Miscondate) : '—'), val(s.MisconductDate ? fmtD(s.MisconductDate) : '—'), val(s.MisconductDateTo ? fmtD(s.MisconductDateTo) : '—')]))
   );
 
-  const secVIII = showPayment
+  const secVIII = isInformation
+    ? '<h2 class="sec">VIII. Payment Details</h2><p class="muted">Fee Not Applicable</p>'
+    : showPayment
     ? section(
         'VIII. Payment Details',
         fr([fc('Mode of Payment', val(c.PaymentModeName)), fc('Payment Date', val(c.PaymentDate ? fmtD(c.PaymentDate) : '—')), fc('Transaction Reference No', val(c.TransRefNo)), fc('GST Number', val(c.GSTINNo))]) +
@@ -772,7 +882,9 @@ async function buildDownloadDoc(id, kind, origin) {
       )
     : '';
 
-  const title = kind === 'compilation' ? 'Case Compilation' : 'Complaint Form';
+  const title = isInformation
+    ? (kind === 'compilation' ? 'Information Compilation' : 'Information')
+    : (kind === 'compilation' ? 'Case Compilation' : 'Complaint Form');
   return `
 <!DOCTYPE html>
 <html><head>
@@ -850,6 +962,9 @@ router.get('/:id/defect-sheet/pdf', async (req, res) => {
     const access = await getComplaintAccess(req, req.params.id);
     if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
     if (!(access.viewerIsInternal || access.directComplainant)) return res.status(403).json({ error: 'Not allowed' });
+    if (await isInformantRecord(req.params.id)) {
+      return res.status(400).json({ error: 'Information records do not have a defect sheet' });
+    }
     const out = await buildDefectSheet(req.params.id);
     if (!out || !out.data) return res.status(404).json({ error: 'No defect sheet is available yet' });
     res.setHeader('Content-Type', 'application/pdf');
@@ -893,6 +1008,9 @@ router.get('/:id/scrutiny/prefill', async (req, res) => {
     const access = await getComplaintAccess(req, req.params.id);
     if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
     if (!access.viewerIsInternal) return res.status(403).json({ error: 'Not allowed' });
+    if (await isInformantRecord(req.params.id)) {
+      return res.status(400).json({ error: 'Information records do not use the complaint scrutiny sheet' });
+    }
     const id = req.params.id;
     const rows = await query(
       `SELECT nc.*, ct.CompTypeName,
@@ -953,6 +1071,9 @@ router.get('/:id/scrutiny/pdf', async (req, res) => {
     const access = await getComplaintAccess(req, req.params.id);
     if (!access.allowed) return res.status(403).json({ error: 'Not allowed' });
     if (!access.viewerIsInternal) return res.status(403).json({ error: 'Not allowed' });
+    if (await isInformantRecord(req.params.id)) {
+      return res.status(400).json({ error: 'Information records do not use the complaint scrutiny sheet' });
+    }
     const out = await buildScrutinyPdf(req.params.id);
     if (!out || !out.data) return res.status(404).json({ error: 'Complaint not found' });
     res.setHeader('Content-Type', 'application/pdf');
@@ -1025,13 +1146,16 @@ router.get('/search', async (req, res) => {
     // staff (DD/SO/BOD/Officer/WO) capability. Scope outsiders to their own cases:
     let scope = '';
     const ut = Number(req.user.UserType);
+    scope = INFORMATION_ROLES.includes(ut)
+      ? ' AND ISNULL(nc.IsInformant, 0) = 1'
+      : ' AND ISNULL(nc.IsInformant, 0) = 0';
     if (ut === 3) {
-      scope = ' AND nc.UserID=@ownUserId';
+      scope += ' AND nc.UserID=@ownUserId';
       params.ownUserId = Number(req.user.UserID);
     } else if (ut === 2) {
       const respEmail = String(req.user.Email || '').trim().toLowerCase();
       if (!respEmail) return res.json([]);
-      scope = ` AND nc.CompID IN (
+      scope += ` AND nc.CompID IN (
           SELECT CompID FROM tbl_AnswerableMember WHERE LOWER(LTRIM(RTRIM(MemEmailID)))=@respEmail
           UNION
           SELECT CompID FROM tbl_NewComplaint WHERE LOWER(LTRIM(RTRIM(ResEmailID)))=@respEmail AND (IsTemp IS NULL OR IsTemp=0))`;
@@ -1085,7 +1209,7 @@ router.get('/lookup', async (req, res) => {
        LEFT JOIN tbl_CompType ct ON nc.CompType = ct.CompTypeID
        LEFT JOIN tbl_NewComplaint pc ON nc.ClubbedWithCompID = pc.CompID
        LEFT JOIN tbl_StatusMaster pcs ON pc.StatusID = pcs.StatusID
-       WHERE (nc.IsTemp IS NULL OR nc.IsTemp=0) AND nc.CompNo = @compNo ${scope}`,
+       WHERE (nc.IsTemp IS NULL OR nc.IsTemp=0) AND ISNULL(nc.IsInformant, 0) = 0 AND nc.CompNo = @compNo ${scope}`,
       params
     );
     if (!rows.length) {
@@ -1192,10 +1316,27 @@ router.get('/:id', async (req, res) => {
       { id }
     );
     if (complaint.length === 0) return res.status(404).json({ error: 'Complaint not found' });
+    const isInfoRecord = Number(complaint[0].IsInformant) === 1;
+    const ut = Number(req.user.UserType);
+    if (isInfoRecord && ![1, 15, 16].includes(ut)) {
+      return res.status(403).json({ error: 'You are not authorised to view this information record' });
+    }
+    if (!isInfoRecord && INFORMATION_ROLES.includes(ut)) {
+      return res.status(403).json({ error: 'Info users can only view information records' });
+    }
+    if (isInfoRecord && ut === 15) {
+      const own = await query(
+        'SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus WHERE CompaintID=@id AND UserID=@uid',
+        { id, uid: Number(req.user.UserID) }
+      );
+      if (!own.length) {
+        return res.status(403).json({ error: 'You are not authorised to view this information record' });
+      }
+    }
 
     // A Sub SO may only open the offline complaints they themselves submitted,
     // even though they are an internal role for the rest of the detail view.
-    if (Number(req.user.UserType) === 14) {
+    if (ut === 14) {
       const own = await query(
         'SELECT TOP 1 CompStatusID FROM tbl_ComplaintStatus WHERE CompaintID=@id AND UserID=@uid',
         { id, uid: Number(req.user.UserID) }
@@ -1282,7 +1423,7 @@ router.get('/:id', async (req, res) => {
     //     only ever see the letters communicated to them and their own entries.
     let viewerRole = resolvePartyRole(req.user, complaint[0], answerable);
     const directComplainant = viewerRole === 'complainant';
-    const viewerIsInternal = isInternalUser(req.user) && !viewerRole;
+    const viewerIsInternal = isInfoRecord ? true : (isInternalUser(req.user) && !viewerRole);
     if (!viewerIsInternal && !viewerRole) {
       // The first complainant of the complaint this one is clubbed with, and the
       // complainant of a complaint clubbed against this one, are parties too.
@@ -1368,6 +1509,14 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/similar-candidates', async (req, res) => {
   try {
     const id = req.params.id;
+    const infoRecord = await isInformantRecord(id);
+    const ut = Number(req.user.UserType);
+    if (infoRecord && ![1, 15, 16].includes(ut)) {
+      return res.status(403).json({ error: 'You are not authorised to view this information record' });
+    }
+    if (!infoRecord && INFORMATION_ROLES.includes(ut)) {
+      return res.status(403).json({ error: 'Info users can only access information records' });
+    }
     const src = await query(
       'SELECT ResRegistrationNo, NatureOfAllegation, EntryDate FROM tbl_NewComplaint WHERE CompID=@id',
       { id }
@@ -1387,8 +1536,9 @@ router.get('/:id/similar-candidates', async (req, res) => {
        FROM tbl_NewComplaint nc
        LEFT JOIN tbl_StatusMaster sm ON nc.StatusID = sm.StatusID
        LEFT JOIN tbl_SimilarCase sc ON sc.CompID=@id AND sc.SCompID=nc.CompID
-       WHERE (nc.IsTemp IS NULL OR nc.IsTemp=0)
-         AND nc.CompID <> @id
+        WHERE (nc.IsTemp IS NULL OR nc.IsTemp=0)
+          AND ISNULL(nc.IsInformant, 0) = ${infoRecord ? 1 : 0}
+          AND nc.CompID <> @id
          AND (nc.EntryDate < @entryDate OR (nc.EntryDate = @entryDate AND nc.CompID < @id))
          AND nc.ClubbedWithCompID IS NULL
          AND nc.StatusID NOT IN (13,14,66,68,69,123,130)
@@ -1425,12 +1575,15 @@ router.put('/:id/similar', async (req, res) => {
     if (list.length === 0) {
       return res.status(400).json({ error: 'Please select at least one similar complaint' });
     }
-    const exists = await query('SELECT COUNT(*) AS cnt FROM tbl_NewComplaint WHERE CompID=@id', { id });
-    if (Number(exists[0].cnt) === 0) return res.status(404).json({ error: 'Complaint not found' });
+    const exists = await query('SELECT IsInformant FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    if (!exists.length) return res.status(404).json({ error: 'Complaint not found' });
+    if (Number(exists[0].IsInformant) === 1) {
+      return res.status(400).json({ error: 'Information records cannot be marked as similar complaints' });
+    }
     if (list.includes(id)) {
       return res.status(400).json({ error: 'A complaint cannot be marked similar to itself' });
     }
-    const selfRow = await query('SELECT CompNo, ClubbedWithCompID, StatusID FROM tbl_NewComplaint WHERE CompID=@id', { id });
+    const selfRow = await query('SELECT CompNo, ClubbedWithCompID, StatusID FROM tbl_NewComplaint WHERE CompID=@id AND ISNULL(IsInformant, 0) = 0', { id });
     if (selfRow.length && (selfRow[0].ClubbedWithCompID || [13,14,66,68,69,123,130].includes(Number(selfRow[0].StatusID)))) {
       return res.status(400).json({ error: 'This complaint cannot be marked similar as it is already clubbed/closed' });
     }
@@ -1439,7 +1592,7 @@ router.put('/:id/similar', async (req, res) => {
     const targetParams = {};
     list.forEach((c, i) => { targetParams[`c${i}`] = c; });
     const found = await query(
-      `SELECT COUNT(*) AS cnt FROM tbl_NewComplaint WHERE CompID IN (${placeholders}) AND ClubbedWithCompID IS NULL AND StatusID NOT IN (13,14,66,68,69,123,130)`,
+      `SELECT COUNT(*) AS cnt FROM tbl_NewComplaint WHERE CompID IN (${placeholders}) AND ISNULL(IsInformant, 0) = 0 AND ClubbedWithCompID IS NULL AND StatusID NOT IN (13,14,66,68,69,123,130)`,
       targetParams
     );
     if (Number(found[0].cnt) !== list.length) {
@@ -1519,6 +1672,14 @@ router.put('/:id/similar', async (req, res) => {
 router.get('/:id/answerable-options', async (req, res) => {
   try {
     const compId = Number(req.params.id);
+    const infoRecord = await isInformantRecord(compId);
+    const ut = Number(req.user.UserType);
+    if (infoRecord && ![1, 15, 16].includes(ut)) {
+      return res.status(403).json({ error: 'You are not authorised to view this information record' });
+    }
+    if (!infoRecord && INFORMATION_ROLES.includes(ut)) {
+      return res.status(403).json({ error: 'Info users can only access information records' });
+    }
     const firmRow = await query('SELECT FirmNo, IsFirm FROM tbl_NewComplaint WHERE CompID=@id', { id: compId });
     if (firmRow.length === 0) return res.status(404).json({ error: 'Complaint not found' });
     if (Number(firmRow[0].IsFirm) !== 1 || !firmRow[0].FirmNo) return res.json([]);
@@ -2835,6 +2996,9 @@ router.post('/:id/defects/respond', async (req, res) => {
     const id = Number(req.params.id);
     const access = await getComplaintAccess(req, id);
     if (!access.allowed) return res.status(403).json({ error: access.reason || 'Not allowed' });
+    if (await isInformantRecord(id)) {
+      return res.status(400).json({ error: 'Information records do not have a defect cycle' });
+    }
     if (!access.directComplainant) {
       return res.status(403).json({ error: 'Only the complainant can respond to these defects' });
     }
@@ -3145,10 +3309,22 @@ router.post('/:id/status', async (req, res) => {
     const userId = req.user.UserID;
 
     const beforeRow = await query(
-      'SELECT CompID, CompNo, StatusID, ClubbedWithCompID, ClubRule FROM tbl_NewComplaint WHERE CompID=@id',
+      'SELECT CompID, CompNo, IsInformant, StatusID, ClubbedWithCompID, ClubRule FROM tbl_NewComplaint WHERE CompID=@id',
       { id }
     );
     if (!beforeRow.length) return res.status(404).json({ error: 'Complaint not found' });
+    const isInfoRecord = Number(beforeRow[0].IsInformant) === 1;
+    const ut = Number(req.user.UserType);
+    if (isInfoRecord) {
+      if (![1, 16].includes(ut)) {
+        return res.status(403).json({ error: 'Only Info SO can update an information record' });
+      }
+      if (Number(statusId) === 3 || !INFORMATION_STATUSES.includes(Number(statusId))) {
+        return res.status(400).json({ error: 'Information records do not use the complaint defect workflow' });
+      }
+    } else if (INFORMATION_ROLES.includes(ut)) {
+      return res.status(403).json({ error: 'Info users can only update information records' });
+    }
     const compNo = beforeRow[0].CompNo;
     const oldStatusId = Number(beforeRow[0].StatusID);
     const oldClubbedWith = beforeRow[0].ClubbedWithCompID ?? null;
@@ -3173,7 +3349,7 @@ router.post('/:id/status', async (req, res) => {
         if (linkId === Number(id)) {
           return res.status(400).json({ error: 'A complaint cannot be clubbed with itself' });
         }
-        const self = await query('SELECT CompNo, StatusID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@id', { id });
+        const self = await query('SELECT CompNo, IsInformant, StatusID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@id', { id });
         if (!self.length) {
           return res.status(404).json({ error: 'Complaint not found' });
         }
@@ -3188,9 +3364,12 @@ router.post('/:id/status', async (req, res) => {
             error: `Complaint ${self[0].CompNo || id} is already clubbed/closed. A new complaint cannot be clubbed with it.`,
           });
         }
-        const target = await query('SELECT CompNo, StatusID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@t', { t: linkId });
+        const target = await query('SELECT CompNo, IsInformant, StatusID, ClubbedWithCompID FROM tbl_NewComplaint WHERE CompID=@t', { t: linkId });
         if (!target.length) {
           return res.status(400).json({ error: 'The previous complaint could not be found' });
+        }
+        if (Number(self[0].IsInformant) !== Number(target[0].IsInformant)) {
+          return res.status(400).json({ error: 'Information records can only be clubbed with other information records' });
         }
         if (target[0].ClubbedWithCompID) {
           return res.status(400).json({
@@ -3586,14 +3765,9 @@ router.post('/', async (req, res) => {
     const userId = req.user.UserID;
     const year = new Date().getFullYear();
     const userType = Number(req.user.UserType);
-    // UserType 14 is the Sub SO who files offline complaints on behalf of a
-    // complainant. The complaint itself is still recorded in the complainant's
-    // name so it shows in their own login after submission.
     const isSubSO = userType === 14;
-    // Only the parties (complainant / respondent), the internal staff who file
-    // on behalf (DD / Sub SO) file complaints; other internal roles work on the
-    // cases assigned to them.
-    if (![1, 2, 3, 4, 14].includes(userType)) {
+    const isInformant = userType === 15;
+    if (![1, 2, 3, 4, 14, 15].includes(userType)) {
       return res.status(403).json({ error: 'Your account is not allowed to file a complaint' });
     }
     // A preview is persisted as a draft (IsTemp=1). Drafts are hidden from the
@@ -3602,8 +3776,8 @@ router.post('/', async (req, res) => {
     const isDraft = b.isDraft === true || b.isDraft === 1 || b.isDraft === '1';
     // Offline complaints are submitted in one shot - the complainant login is
     // created at that moment, so a draft would leave the case unattached.
-    if (isSubSO && isDraft) {
-      return res.status(400).json({ error: 'Offline complaints cannot be saved as a draft; please submit the complaint.' });
+    if ((isSubSO || isInformant) && isDraft) {
+      return res.status(400).json({ error: 'This record cannot be saved as a draft; please submit it.' });
     }
     // Brief facts and particulars of misconduct each need either the signed PDF
     // or a remark; submitting both is allowed.
@@ -3621,14 +3795,14 @@ router.post('/', async (req, res) => {
       id: b.compTypeId || 0,
     });
     const isGov = compType.length > 0 && Number(compType[0].IsGov) === 1;
-    const { compNo, complaintNo } = await generateComplaintNo(isGov, year);
-    const initialStatus = 1;
+    const { compNo, complaintNo } = await generateComplaintNo(isGov, year, isInformant);
+    const initialStatus = isInformant ? INFORMATION_SUBMITTED_STATUS : 1;
 
     // Complainant details: DD (UserType 4) and Sub SO (UserType 14) file for
     // someone else, so the body fields describe the complainant. Everyone else
     // files for themselves.
     let complainant;
-    if (userType === 4 || isSubSO) {
+    if (userType === 4 || isSubSO || isInformant) {
       complainant = [{
         NameOfTheUser: b.name || null,
         Email: b.email || null,
@@ -3725,8 +3899,8 @@ router.post('/', async (req, res) => {
          BriefStatement, BriefAttachment, ParticularMisconduct, MisconductAttachment,
          PaymentMode, PaymentDate, TransRefNo, GSTINNo, InstrumentNo, InstrumentDate,
          TaxableAmount, TaxRate, PaymentDetails,
-         UserID, EntryDate, StatusID, StateID, CityID, PinCode, Region,
-         CompNo, Year,
+          UserID, EntryDate, StatusID, StateID, CityID, PinCode, Region,
+          CompNo, Year, IsInformant,
          RStateName, RCityName, RStateID, RCityID, RRegion, RComRegion,
          Salutation, RelationName,
          RegulatorName, RegulatorDesignation, RegulatorID, RegulatorAttachment, PersonName,
@@ -3747,8 +3921,8 @@ router.post('/', async (req, res) => {
          @brief, @briefAttach, @misconduct, @misconductAttach,
          @paymentMode, @paymentDate, @transRef, @gstIn, @instrumentNo, @instrumentDate,
          @taxable, @taxRate, @paymentDetails,
-         @userId, GETDATE(), @initialStatus, @stateId, @cityId, @pincode, @region,
-         @compNo, @year,
+          @userId, GETDATE(), @initialStatus, @stateId, @cityId, @pincode, @region,
+          @compNo, @year, @isInformant,
          @rStateName, @rCityName, @rStateId, @rCityId, @rRegion, @rComRegion,
          @salutation, @relationName,
          @regulatorName, @regulatorDesignation, @regulatorId, @regulatorAttach, @personName,
@@ -3762,6 +3936,7 @@ router.post('/', async (req, res) => {
          @verificationDate, @verificationTime, @verificationPlace)`,
       {
         complaintNo,
+        isInformant: isInformant ? 1 : 0,
         compType: b.compTypeId || null,
         name: c.NameOfTheUser || null,
         email: c.Email || null,
@@ -3791,15 +3966,15 @@ router.post('/', async (req, res) => {
         briefAttach: b.briefAttachment || null,
         misconduct: b.particularMisconduct || null,
         misconductAttach: b.misconductAttachment || null,
-        paymentMode: b.paymentMode || null,
-        paymentDate: b.paymentDate || null,
-        transRef: b.transRefNo || null,
-        gstIn: b.gstinNo || null,
-        instrumentNo: b.instrumentNo || null,
-        instrumentDate: b.instrumentDate || null,
-        taxable: isGov ? 0 : b.taxableAmount || null,
-        taxRate: isGov ? 0 : b.taxRate || null,
-        paymentDetails: b.paymentDetails || null,
+        paymentMode: isInformant ? null : b.paymentMode || null,
+        paymentDate: isInformant ? null : b.paymentDate || null,
+        transRef: isInformant ? null : b.transRefNo || null,
+        gstIn: isInformant ? null : b.gstinNo || null,
+        instrumentNo: isInformant ? null : b.instrumentNo || null,
+        instrumentDate: isInformant ? null : b.instrumentDate || null,
+        taxable: isInformant || isGov ? 0 : b.taxableAmount || null,
+        taxRate: isInformant || isGov ? 0 : b.taxRate || null,
+        paymentDetails: isInformant ? null : b.paymentDetails || null,
         userId: complaintUserId,
         initialStatus,
         stateId: complainantStateId,
@@ -3829,7 +4004,7 @@ router.post('/', async (req, res) => {
         firmProfStateId: b.firmProfStateId || null,
         firmProfCityId: b.firmProfCityId || null,
         isTemp: isDraft ? 1 : 0,
-        formType: b.formType || null,
+        formType: isInformant ? 'I' : b.formType || null,
         investReport: b.investigatingReport || null,
         isInvestReport: b.isInvestigatingReportAvailable ? 1 : 0,
         gstType: b.gstType || null,
@@ -3851,7 +4026,13 @@ router.post('/', async (req, res) => {
     // complainant can see that the case was filed offline on their behalf.
     const OFFLINE_SUBMITTED_STATUS = 134;
 
-    if (isSubSO) {
+    if (isInformant) {
+      await executeNonQuery(
+        `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, StatusDate, Remarks)
+         VALUES (@id, @infoStatus, @userId, GETDATE(), 'Information submitted by Info Sub SO')`,
+        { id: compId, infoStatus: INFORMATION_SUBMITTED_STATUS, userId }
+      );
+    } else if (isSubSO) {
       await executeNonQuery(
         `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, StatusDate, Remarks)
          VALUES (@id, @offlineStatus, @userId, GETDATE(), 'Offline complaint submitted by Sub SO')`,
@@ -3872,7 +4053,21 @@ router.post('/', async (req, res) => {
     // Drafts are never assigned - they wait until the complainant submits.
     // A Sub SO's offline complaint is submitted and forwarded in one step.
     let assignedSO = null;
-    if (!isDraft) {
+    if (isInformant) {
+      const fixedInfoSO = await resolveFixedInfoSO();
+      if (fixedInfoSO) {
+        assignedSO = fixedInfoSO;
+        await executeNonQuery(
+          `INSERT INTO tbl_ComplaintStatus (CompaintID, StatusID, UserID, UserToID, StatusDate, Remarks)
+           VALUES (@id, @infoStatus, @userId, @userToId, GETDATE(), 'Forwarded to the Info SO for scrutiny')`,
+          { id: compId, infoStatus: INFORMATION_UNDER_SCRUTINY_STATUS, userId, userToId: fixedInfoSO }
+        );
+        await executeNonQuery('UPDATE tbl_NewComplaint SET StatusID=@infoStatus WHERE CompID=@id', {
+          id: compId,
+          infoStatus: INFORMATION_UNDER_SCRUTINY_STATUS,
+        });
+      }
+    } else if (!isDraft) {
       const fixedSO = await resolveFixedSO();
       if (fixedSO) {
         assignedSO = fixedSO;
@@ -4008,14 +4203,14 @@ router.post('/', async (req, res) => {
     await writeAudit(req, {
       compId,
       compNo,
-      action: isDraft ? 'COMPLAINT_DRAFT_CREATED' : (isSubSO ? 'OFFLINE_COMPLAINT_CREATED' : 'COMPLAINT_CREATED'),
+      action: isDraft ? 'COMPLAINT_DRAFT_CREATED' : (isInformant ? 'INFORMATION_CREATED' : (isSubSO ? 'OFFLINE_COMPLAINT_CREATED' : 'COMPLAINT_CREATED')),
       entity: 'COMPLAINT',
       entityId: compId,
       oldValues: null,
       newValues: {
         CompNo: compNo,
         IsTemp: isDraft ? 1 : 0,
-        StatusID: isDraft ? 1 : (assignedSO ? 2 : (isSubSO ? OFFLINE_SUBMITTED_STATUS : 1)),
+        StatusID: isDraft ? 1 : (isInformant ? (assignedSO ? INFORMATION_UNDER_SCRUTINY_STATUS : INFORMATION_SUBMITTED_STATUS) : (assignedSO ? 2 : (isSubSO ? OFFLINE_SUBMITTED_STATUS : 1))),
         AssignedTo: assignedSO,
         CompTypeID: b.compTypeId || null,
         Complainant: b.name || complainant?.[0]?.NameOfTheUser || null,
@@ -4026,9 +4221,13 @@ router.post('/', async (req, res) => {
       },
       details: isDraft
         ? 'Complaint draft created.'
-        : (isSubSO
-          ? 'Offline complaint submitted by Sub SO and forwarded to the fixed SO for scrutiny.'
-          : (assignedSO ? 'Complaint filed and auto-assigned to the fixed SO.' : 'Complaint filed; no SO resolved so it awaits manual assignment.')),
+        : (isInformant
+          ? (assignedSO
+            ? 'Information submitted by Info Sub SO and forwarded to the Info SO for scrutiny.'
+            : 'Information submitted by Info Sub SO; no Info SO resolved so it awaits manual assignment.')
+          : (isSubSO
+            ? 'Offline complaint submitted by Sub SO and forwarded to the fixed SO for scrutiny.'
+            : (assignedSO ? 'Complaint filed and auto-assigned to the fixed SO.' : 'Complaint filed; no SO resolved so it awaits manual assignment.'))),
     });
 
     res.status(201).json({
@@ -4056,6 +4255,14 @@ router.post('/', async (req, res) => {
 router.get('/:id/clubbed-list', async (req, res) => {
   try {
     const id = req.params.id;
+    const infoRecord = await isInformantRecord(id);
+    const ut = Number(req.user.UserType);
+    if (infoRecord && ![1, 15, 16].includes(ut)) {
+      return res.status(403).json({ error: 'You are not authorised to view this information record' });
+    }
+    if (!infoRecord && INFORMATION_ROLES.includes(ut)) {
+      return res.status(403).json({ error: 'Info users can only access information records' });
+    }
     const rows = await query(
       `SELECT nc.CompID, nc.CompNo, nc.Name AS ComplainantName, nc.ResName, nc.ResEmailID,
               nc.StatusID, sm.StatusName, nc.EntryDate, nc.ClubRule, nc.UserID,
@@ -4066,6 +4273,7 @@ router.get('/:id/clubbed-list', async (req, res) => {
        LEFT JOIN tbl_NewComplaint pc ON nc.ClubbedWithCompID = pc.CompID
        LEFT JOIN tbl_StatusMaster pcs ON pc.StatusID = pcs.StatusID
        WHERE nc.ClubbedWithCompID = @id AND (nc.IsTemp IS NULL OR nc.IsTemp=0)
+         AND ISNULL(nc.IsInformant, 0) = ${infoRecord ? 1 : 0}
        ORDER BY nc.EntryDate ASC`,
       { id }
     );

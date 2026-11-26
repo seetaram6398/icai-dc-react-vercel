@@ -1,4 +1,5 @@
 const fs = require('fs');
+const fontkit = require('@pdf-lib/fontkit');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const { query } = require('../config/db');
 const { resolveDocumentPath } = require('./documents');
@@ -89,6 +90,7 @@ async function buildComplaintPdf(id, opts) {
   );
   if (rows.length === 0) return null;
   const c = rows[0];
+  const isInformation = Number(c.IsInformant) === 1;
 
   const factPersons = await query('SELECT * FROM tbl_FactPersons WHERE CompID=@id', { id });
   const answerable = await query('SELECT * FROM tbl_AnswerableMember WHERE CompID=@id', { id });
@@ -99,7 +101,7 @@ async function buildComplaintPdf(id, opts) {
   );
   const docs = await query('SELECT CompAttachID, DocumentID, DocURL FROM tbl_ComplaintDocument WHERE CompID=@id', { id });
   let history = [];
-  if (includeHistory) {
+  if (!isInformation && includeHistory) {
     history = await query(
       `SELECT cs.StatusDate, cs.StatusID, cs.Remarks, cs.Attachment, cs.CommonField, cs.ExtensionTime,
               sm.StatusName, u.NameOfTheUser AS ByUserName
@@ -157,8 +159,20 @@ async function buildComplaintPdf(id, opts) {
   const attach = attachments;
 
   const doc = await PDFDocument.create();
+  doc.registerFontkit(fontkit);
   const fontB = await doc.embedFont(StandardFonts.HelveticaBold);
   const fontR = await doc.embedFont(StandardFonts.Helvetica);
+  let infoFont = fontR;
+  let infoFontB = fontB;
+  if (isInformation) {
+    const readFont = (p) => {
+      try { return fs.readFileSync(p); } catch (_) { return null; }
+    };
+    const cal = readFont('C:/Windows/Fonts/calibri.ttf');
+    const calB = readFont('C:/Windows/Fonts/calibrib.ttf');
+    if (cal) infoFont = await doc.embedFont(cal, { subset: true });
+    if (calB) infoFontB = await doc.embedFont(calB, { subset: true });
+  }
 
   // ---- Embed form images (photo, PAN/Aadhar, signature) ----
   const readImage = async (value, kind) => {
@@ -199,10 +213,13 @@ async function buildComplaintPdf(id, opts) {
   function tcell(w, text, opts) {
     const o = opts || {};
     const size = o.size || 8.5;
-    const font = o.bold ? fontB : fontR;
+    const font = o.font || (o.bold ? fontB : fontR);
     const lines = wrapLines(font, size, text == null ? '' : String(text), Math.max(4, w - 2 * PAD));
     const h = Math.max(14, lines.length * (size + 1.5) + 2 * PAD);
-    return { w, size, font, bold: !!o.bold, italic: !!o.italic, color: o.color || DARK, lines, h, align: o.align || 'l' };
+    return {
+      w, size, font, bold: !!o.bold, italic: !!o.italic, color: o.color || DARK, lines, h,
+      align: o.align || 'l', noBorder: !!o.noBorder, borderColor: o.borderColor, borderWidth: o.borderWidth,
+    };
   }
 
   // Image cell (single image or two side-by-side images).
@@ -240,10 +257,18 @@ async function buildComplaintPdf(id, opts) {
 
   // Row = { cells, span? } -> compute canvas height and draw.
   function drawCellBox(x, yTop, w, h, cell) {
-    page.drawRectangle({ x, y: yTop - h, width: w, height: h, borderColor: LINE, borderWidth: 0.6 });
+    if (!cell.noBorder) {
+      page.drawRectangle({
+        x, y: yTop - h, width: w, height: h,
+        borderColor: cell.borderColor || LINE,
+        borderWidth: cell.borderWidth || 0.6,
+      });
+    }
     if (cell.images) {
       const totalW = cell.images.reduce((a, im) => a + im.w, 0) + Math.max(0, cell.images.length - 1) * 6;
-      let ix = x + Math.max((w - totalW) / 2, PAD);
+      let ix = cell.align === 'r'
+        ? x + w - PAD - totalW
+        : x + Math.max((w - totalW) / 2, PAD);
       const top = yTop - PAD;
       cell.images.forEach((im) => {
         page.drawImage(im.obj, { x: ix, y: top - im.h, width: im.w, height: im.h });
@@ -281,7 +306,11 @@ async function buildComplaintPdf(id, opts) {
     if (!lines.length) return;
     lines.forEach((ln, i) => {
       const textW = cell.font.widthOfTextAtSize(ln, cell.size);
-      const tx = cell.align === 'c' ? x + (w - textW) / 2 : x + PAD;
+      const tx = cell.align === 'c'
+        ? x + (w - textW) / 2
+        : cell.align === 'r'
+          ? x + w - PAD - textW
+          : x + PAD;
       page.drawText(ln, { x: tx, y: yTop - PAD - cell.size - i * (cell.size + 1.5), size: cell.size, font: cell.font, color: cell.color });
     });
   }
@@ -387,18 +416,23 @@ async function buildComplaintPdf(id, opts) {
       })
     : [];
 
-  const formRowsStart = [
-    // ----- Header (Appendix I) -----
-    { cells: [tcell(CW, 'APPENDIX – I', { bold: true, size: 13, align: 'c' })], h: 24 },
-    { cells: [tcell(CW, `Form ${sanitize(c.FormType) || 'A'}`, { bold: true, size: 13, align: 'c' })], h: 22 },
-    { cells: [tcell(CW, '[See Rule 3 (1)]', { italic: true, size: 10.5, align: 'c' })], h: 20 },
-    { cells: [tcell(CW, 'Form for Filing a Complaint under Section 21', { bold: true, size: 11.5, align: 'c' })], h: 24 },
-    { cells: [tcell(CW, `Complaint No. : ${detail(c.CompNo)}`, { bold: true, size: 10, align: 'c', color: NAVY })], h: 22 },
-  ];
+  const formRowsStart = isInformation
+    ? [
+        { cells: [tcell(CW, 'INFORMATION', { bold: true, size: 13, align: 'c' })], h: 24 },
+        { cells: [tcell(CW, 'Register of Information', { bold: true, size: 12, align: 'c' })], h: 22 },
+        { cells: [tcell(CW, `Information No. : ${detail(c.CompNo)}`, { bold: true, size: 10, align: 'c', color: NAVY })], h: 22 },
+      ]
+    : [
+        { cells: [tcell(CW, 'APPENDIX – I', { bold: true, size: 13, align: 'c' })], h: 24 },
+        { cells: [tcell(CW, `Form ${sanitize(c.FormType) || 'A'}`, { bold: true, size: 13, align: 'c' })], h: 22 },
+        { cells: [tcell(CW, '[See Rule 3 (1)]', { italic: true, size: 10.5, align: 'c' })], h: 20 },
+        { cells: [tcell(CW, 'Form for Filing a Complaint under Section 21', { bold: true, size: 11.5, align: 'c' })], h: 24 },
+        { cells: [tcell(CW, `Complaint No. : ${detail(c.CompNo)}`, { bold: true, size: 10, align: 'c', color: NAVY })], h: 22 },
+      ];
 
   const formRowsBody = [
     // 1. Particulars of the Complainant
-    { cells: [tcell(COLS[0], '1.', { bold: true }), tcell(COLS[1] + COLS[2], 'Particulars of the Complainant', { bold: true })] },
+    { cells: [tcell(COLS[0], '1.', { bold: true }), tcell(COLS[1] + COLS[2], isInformation ? 'Particulars of the Informant' : 'Particulars of the Complainant', { bold: true })] },
     { cells: [
       tcell(COLS[0], '(a)(*)'),
       tcell(COLS[1], 'Full Name:\nIf the Complainant is a Member of the Institute of the Chartered Accountants of India, specify MRN;\nIf the Complainant is a Firm registered with the Institute of the Chartered Accountants of India, specify FRN and attach a certified copy of authorization by the partners/ Managing partner, if he is empowered;\nIf the Complainant is a Firm other than a CA firm, specify Firm Registration number, if any and attach a certified copy of authorization by the partners/ Managing partner, if he is empowered;\nIf the Complainant is a Company registered under the Companies Act, specify CIN and attach a certified copy of Board resolution;\nIf the Complainant is a Government Department, Government Agency, Statutory Authority, attach the authorization in terms of Rule -----\nIf the Complainant is any other entity, specify Registration number of the entity, if any. Attach a certified copy of resolution of such governing body or managing committee of such entity;', { size: 7.5 }),
@@ -467,7 +501,7 @@ async function buildComplaintPdf(id, opts) {
     { cells: [tcell(COLS[0], '3', { bold: true }), tcell(COLS[1], 'Members Answerable', { bold: true }), ansCols] },
 
     // 4. Particulars of Complaint
-    { cells: [tcell(COLS[0], '4', { bold: true }), tcell(COLS[1] + COLS[2], 'Particulars of Complaint', { bold: true })] },
+    { cells: [tcell(COLS[0], '4', { bold: true }), tcell(COLS[1] + COLS[2], isInformation ? 'Particulars of Information' : 'Particulars of Complaint', { bold: true })] },
     { cells: [
       tcell(COLS[0], '(a)(*)'),
       tcell(COLS[1], 'Brief Statement of facts'),
@@ -500,11 +534,13 @@ async function buildComplaintPdf(id, opts) {
 
     // 7. Complaint fee
     { cells: [
-      tcell(COLS[0], '7(*)'),
-      tcell(COLS[1], 'Particulars of the Complaint fee - Mode of Payment, DD No. and date or online transaction number, Date of payment'),
-      tcell(COLS[2], isGovType
-        ? 'Exempt'
-        : `Mode - ${detail(PAY_MODE_LABELS[c.PaymentMode] || c.PaymentModeName || c.PaymentMode)}\nDate - ${fmtD(c.PaymentDate) || '—'}\nRef No. - ${detail(c.TransRefNo)}${c.PaymentDetails ? `\n${c.PaymentDetails}` : ''}`),
+      tcell(COLS[0], isInformation ? '7' : '7(*)'),
+      tcell(COLS[1], isInformation ? 'Particulars of the fee' : 'Particulars of the Complaint fee - Mode of Payment, DD No. and date or online transaction number, Date of payment'),
+      tcell(COLS[2], isInformation
+        ? 'Fee Not Applicable'
+        : (isGovType
+          ? 'Exempt'
+          : `Mode - ${detail(PAY_MODE_LABELS[c.PaymentMode] || c.PaymentModeName || c.PaymentMode)}\nDate - ${fmtD(c.PaymentDate) || '—'}\nRef No. - ${detail(c.TransRefNo)}${c.PaymentDetails ? `\n${c.PaymentDetails}` : ''}`)),
     ]},
 
     // 8. Persons with knowledge
@@ -557,14 +593,158 @@ async function buildComplaintPdf(id, opts) {
   ];
 
   // ======================================================================
-  // Render the Form A template
+  // Render the official Form I template; regular workflow sections follow below.
   // ======================================================================
-  renderRows([...formRowsStart, ...formRowsBody]);
+  let templateRows;
+  {
+    const IC = [490, 3960, 605, 4824].map((w) => (CW * w) / 9879);
+    const plainA = [CW / 2, CW / 2];
+    const plainB = [(CW * 4608) / 9792, (CW * 5184) / 9792];
+    const INFO_BORDER = rgb(0.2, 0.2, 0.2);
+    const EDGE = { borderColor: INFO_BORDER, borderWidth: 0.875 };
+    const t = (w, text, opts = {}) => tcell(w, text, {
+      size: opts.size || 11,
+      font: opts.bold ? infoFontB : infoFont,
+      ...opts,
+    });
+    const cbox = (w, text, opts = {}) => t(w, text, { ...EDGE, ...opts });
+    const who = isInformation ? 'Informant' : 'Complainant';
+    const matter = isInformation ? 'information' : 'complaint';
+    const dotBlock = (count, w, prefix = '') => {
+      const lines = [];
+      let left = count;
+      let lead = prefix;
+      while (left > 0) {
+        const limit = w - 2 * PAD - infoFont.widthOfTextAtSize(lead, 11);
+        let take = 0;
+        while (take < left && infoFont.widthOfTextAtSize('.'.repeat(take + 1), 11) <= limit) take += 1;
+        if (!take) take = left;
+        lines.push(lead + '.'.repeat(take));
+        left -= take;
+        lead = '';
+      }
+      return lines.join('\n');
+    };
+    const dot216 = dotBlock(216, IC[3]);
+    const dot144 = dotBlock(144, IC[3]);
+    const pin24 = '.'.repeat(24);
+    const numDots = (n) => dotBlock(48, IC[3], `${n}. `);
+    const spacer = (h) => ({ cells: [{ w: CW, h, lines: [], noBorder: true }] });
+    const resRegNo = [isFirm ? c.FirmNo : '', c.ResRegistrationNo].filter((v) => sanitize(v)).join(', ');
+    const resStateCity = [c.ResStateName, c.ResCityName].filter((v) => sanitize(v)).join(', ');
+    const resProfFull = [sanitize(c.ResProfAddress) || dot216, resStateCity].filter(Boolean).join('\n');
+    const allegationEntries = [];
+    if (sanitize(c.ParticularMisconduct)) allegationEntries.push(detail(c.ParticularMisconduct));
+    schedules.forEach((s) => {
+      const parts = [
+        sanitize(s.ScheduleName),
+        sanitize(s.PartNo) ? `Part ${sanitize(s.PartNo)}` : '',
+        sanitize(s.ItemName) ? `Item ${sanitize(s.ItemName)}` : '',
+      ].filter(Boolean);
+      if (parts.length) allegationEntries.push(parts.join(' - '));
+    });
+    if (sanitize(c.BriefStatement)) allegationEntries.push(detail(c.BriefStatement));
+    const allegationText = Array.from({ length: 5 }, (_, i) => allegationEntries[i] ? `${i + 1}. ${allegationEntries[i]}` : numDots(i + 1)).join('\n');
+    const evidenceText = evidenceLines.length ? evidenceLines.join('\n') : dot144;
+    const personText = factPersons.length
+      ? factPersons.map((p, i) => `${i + 1}. ${[sanitize(p.PersonName), sanitize(p.PersonMobile), sanitize(p.PersonEmail)].filter(Boolean).join(', ')}`).join('\n')
+      : dot144;
+    const infoPlace = sanitize(c.VerificationPlace) || sanitize(c.CompCityName) || '';
+    const datePlace = `Date: ${fmtD(verificationDate) || ''}\nPlace: ${infoPlace}`;
+    const verifName = sanitize(c.Name) || '.'.repeat(36);
+    const verifDay = verificationDay || '.'.repeat(24);
+    const verifPeriod = verificationMonthYear || `${'.'.repeat(24)} 20${'.'.repeat(8)}`;
+    const verifPlace = infoPlace || '.'.repeat(24);
+    const signatureCell = (w) => signImg
+      ? { ...icell(w, [signImg], 110, 38), align: 'r', noBorder: true }
+      : t(w, `Signature of the ${who}`, { align: 'r', noBorder: true });
+    templateRows = [
+      { cells: [t(CW, 'FORM I', { bold: true, align: 'c', noBorder: true })] },
+      { cells: [t(CW, '[See sub-rule (1) of Rule 3]', { bold: true, size: 9, align: 'c', noBorder: true })] },
+      {
+        cells: [
+          cbox(IC[0], '1.', { align: 'c' }),
+          cbox(IC[1], `Name of the ${who}:(with membership number, if member of Institute of Chartered Accountants of India)`),
+          cbox(IC[2], ''),
+          cbox(IC[3], [sanitize(c.Name) || dot216, mrn ? `(Membership No.: ${mrn})` : ''].filter(Boolean).join('\n')),
+        ],
+      },
+      {
+        cells: [
+          cbox(IC[0], '2.', { align: 'c' }),
+          cbox(IC[1], `Name of the member/firm against whom ${matter} is being made:(with membership number/registration number of the firm, if known)`),
+          cbox(IC[2], ''),
+          cbox(IC[3], [sanitize(c.ResName) || dot216, resRegNo ? `(${resRegNo})` : ''].filter(Boolean).join('\n')),
+        ],
+      },
+      {
+        cells: [
+          cbox(IC[0], '3.', { align: 'c' }),
+          cbox(IC[1], `Latest address of the ${who.toLowerCase()} for communication`),
+          cbox(IC[2], ''),
+          cbox(IC[3], [compAddressFull || dot216, compStateCity, `Pin Code: ${sanitize(c.Pincode) || pin24}`].filter(Boolean).join('\n')),
+        ],
+      },
+      {
+        cells: [
+          cbox(IC[0], '4.', { align: 'c' }),
+          cbox(IC[1], `Last available professional address of the Member or the firm against whom the ${matter} is made`),
+          cbox(IC[2], ''),
+          cbox(IC[3], `${resProfFull}\nPin Code: ${pin24}`),
+        ],
+      },
+      {
+        cells: [
+          cbox(IC[0], '5.', { align: 'c' }),
+          cbox(IC[1], 'Particulars of allegation(s) serially numbered together with corresponding clause/part of the relevant Schedule(s), or\nParticulars of allegation(s) serially numbered together with clause/part of the relevant Schedule(s) under which the alleged acts of commission or omission or both would fall'),
+          cbox(IC[2], ''),
+          cbox(IC[3], allegationText),
+        ],
+      },
+      {
+        cells: [
+          cbox(IC[0], '6.', { align: 'c' }),
+          cbox(IC[1], 'Particulars of evidence(s) adduced in support of the allegation(s) made'),
+          cbox(IC[2], ''),
+          cbox(IC[3], evidenceText),
+        ],
+      },
+      {
+        cells: [
+          cbox(IC[0], '7.', { align: 'c' }),
+          cbox(IC[1], 'Name(s) of person who have knowledge of the facts of the case'),
+          cbox(IC[2], ''),
+          cbox(IC[3], personText),
+        ],
+      },
+      {
+        cells: [
+          t(plainA[0], datePlace, { noBorder: true }),
+          signatureCell(plainA[1]),
+        ],
+      },
+      spacer(26),
+      { cells: [t(CW, 'VERIFICATION', { bold: true, size: 10, align: 'c', noBorder: true })] },
+      {
+        cells: [t(CW, `I, ${verifName}, the ${who}, do hereby declare that what is stated above is true to the best of my information and belief.`, { noBorder: true })],
+      },
+      spacer(12),
+      { cells: [t(CW, `Verified today the ${verifDay} day of ${verifPeriod} at ${verifPlace}`, { align: 'c', noBorder: true })] },
+      spacer(14),
+      {
+        cells: [
+          t(plainB[0], datePlace, { noBorder: true }),
+          signatureCell(plainB[1]),
+        ],
+      },
+    ];
+  }
+  renderRows(templateRows);
 
   // ---------- Defects (Rule 5(5)) + complainant's rectification ----------
   // Placed against the relevant Form I column so the latest defect cycle and the
   // complainant's response travel with the complaint form.
-  if (defects.length) {
+  if (!isInformation && defects.length) {
     const dWidths = [CW * 0.05, CW * 0.19, CW * 0.31, CW * 0.32, CW * 0.13];
     const defectRows = [
       {
@@ -606,7 +786,7 @@ async function buildComplaintPdf(id, opts) {
   }
 
   // ---------- Status history (compilation) ----------
-  if (includeHistory) {
+  if (!isInformation && includeHistory) {
     renderRows([
       {
         cells: [tcell(COLS[0], ''), tcell(COLS[1] + COLS[2], 'Case Compilation — Status History', { bold: true })],
@@ -619,7 +799,7 @@ async function buildComplaintPdf(id, opts) {
   if (attach.length) {
     ensureSpace(24);
     y -= 12;
-    headingRow('', 'Documents Attached to this Complaint');
+    headingRow('', isInformation ? 'Documents Attached to this Information' : 'Documents Attached to this Complaint');
     for (const f of attach) {
       const name = f.title || f.rel.split('/').pop();
       const ext = f.rel.split('.').pop().toLowerCase();
@@ -666,23 +846,27 @@ async function buildComplaintPdf(id, opts) {
     }
   }
 
-  try {
-    const defectSheet = await buildDefectSheet(id, { includeAttachments: false, skipFooters: true });
-    if (defectSheet && defectSheet.data) {
-      const sheetSrc = await PDFDocument.load(defectSheet.data, { ignoreEncryption: true });
-      const sheetPages = await doc.copyPages(sheetSrc, sheetSrc.getPageIndices());
-      sheetPages.forEach((p) => doc.addPage(p));
+  if (!isInformation) {
+    try {
+      const defectSheet = await buildDefectSheet(id, { includeAttachments: false, skipFooters: true });
+      if (defectSheet && defectSheet.data) {
+        const sheetSrc = await PDFDocument.load(defectSheet.data, { ignoreEncryption: true });
+        const sheetPages = await doc.copyPages(sheetSrc, sheetSrc.getPageIndices());
+        sheetPages.forEach((p) => doc.addPage(p));
+      }
+    } catch (defectSheetErr) {
+      console.error('merge defect sheet into form pdf error:', defectSheetErr.message);
     }
-  } catch (defectSheetErr) {
-    console.error('merge defect sheet into form pdf error:', defectSheetErr.message);
   }
 
   // ---------- Page footers ----------
-  const total = doc.getPageCount();
-  for (let i = 0; i < total; i += 1) {
-    const p = doc.getPage(i);
-    const s = `Page ${i + 1} of ${total}`;
-    p.drawText(s, { x: (A4[0] - fontR.widthOfTextAtSize(s, 8)) / 2, y: 18, size: 8, font: fontR, color: GRAY });
+  if (!isInformation) {
+    const total = doc.getPageCount();
+    for (let i = 0; i < total; i += 1) {
+      const p = doc.getPage(i);
+      const s = `Page ${i + 1} of ${total}`;
+      p.drawText(s, { x: (A4[0] - fontR.widthOfTextAtSize(s, 8)) / 2, y: 18, size: 8, font: fontR, color: GRAY });
+    }
   }
 
   const filenameBase = String(c.CompNo || id).replace(/[\\/]/g, '_');

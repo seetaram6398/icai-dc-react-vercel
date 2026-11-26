@@ -25,7 +25,7 @@ function daysTone(days) {
 const ALLOWED_EXT = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
 const MAX_SIZE = 512000;
 
-function ComplaintList() {
+function ComplaintList({ informationMode = false }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -37,10 +37,14 @@ function ComplaintList() {
   const aspxView = ut === 3;
   const isParty = ut === 2 || ut === 3;
   const isSubSO = ut === 14;
-  const canFileComplaint = [1, 2, 3, 14].includes(ut) && Number(user?.IsFirmUser) !== 1;
-  const fileComplaintLabel = ut === 1
-    ? 'File New Complaint'
-    : ut === 14 ? 'File Offline Complaint' : 'Add New Complaint';
+  const isInfoUser = ut === 15 || ut === 16;
+  const showInformation = informationMode || isInfoUser;
+  const canFileComplaint = showInformation
+    ? ut === 15
+    : ([1, 2, 3, 14].includes(ut) && Number(user?.IsFirmUser) !== 1);
+  const fileComplaintLabel = showInformation
+    ? 'Register Information'
+    : (ut === 1 ? 'File New Complaint' : ut === 14 ? 'File Offline Complaint' : 'Add New Complaint');
   // Rule 5(4) - the staff (Admin / DD / SO) also see the clubbing and closure
   // relationships in the complaint list; the parties only ever see complaint
   // numbers, never any other detail of a clubbed complaint.
@@ -62,6 +66,7 @@ function ComplaintList() {
 
   useEffect(() => {
     const params = new URLSearchParams();
+    if (showInformation) params.set('informationScope', 'information');
     if (statusIds) params.set('statusIds', statusIds);
     if (actionPending) params.set('actionPending', '1');
     if (ut === 3) params.set('complainantId', user.UserID);
@@ -95,9 +100,11 @@ function ComplaintList() {
   }, [isParty, ut, user?.UserID, user?.Email]);
 
   useEffect(() => {
-    api.get('/masters/12').then((res) => setStatuses(res.data || [])).catch(() => {});
+    const statusParams = new URLSearchParams();
+    if (showInformation) statusParams.set('informationScope', 'information');
+    api.get(`/masters/12?${statusParams.toString()}`).then((res) => setStatuses(res.data || [])).catch(() => {});
     api.get('/masters/6?option1=5').then((res) => setSoMembers(res.data || [])).catch(() => {});
-  }, []);
+  }, [showInformation]);
 
   const applyFilter = (ids = draft) => {
     const params = new URLSearchParams();
@@ -117,11 +124,12 @@ function ComplaintList() {
       popup.warning('Complaint is on Stay...');
       return;
     }
-    navigate(`/complaints/${c.CompID}`);
+    navigate(showInformation ? `/informant-register/${c.CompID}` : `/complaints/${c.CompID}`);
   };
 
   const exportCsv = async () => {
     const params = new URLSearchParams();
+    if (showInformation) params.set('informationScope', 'information');
     if (statusIds) params.set('statusIds', statusIds);
     if (actionPending) params.set('actionPending', '1');
     if (q.search) params.set('search', q.search);
@@ -132,7 +140,7 @@ function ComplaintList() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Complaint_Data_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `${showInformation ? 'Information' : 'Complaint'}_Data_${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -210,10 +218,12 @@ function ComplaintList() {
             <i className="bi bi-file-earmark-text" />
           </div>
           <div className="report-header-text">
-            <h2 className="page-title">Complaint Register</h2>
+            <h2 className="page-title">{showInformation ? 'Information Register' : 'Complaint Register'}</h2>
             {!isSubSO && (
               <p className="page-subtitle">
-                Browse all registered complaints and their current stage of processing
+                {showInformation
+                  ? 'Browse all registered information and their current stage of processing'
+                  : 'Browse all registered complaints and their current stage of processing'}
               </p>
             )}
           </div>
@@ -226,7 +236,7 @@ function ComplaintList() {
           )}
           {!isSubSO && (
             <span className="badge-soft badge-soft-neutral">
-              <i className="bi bi-collection" /> {displayRows.length} complaint{displayRows.length === 1 ? '' : 's'}
+              <i className="bi bi-collection" /> {displayRows.length} {showInformation ? 'information record' : 'complaint'}{displayRows.length === 1 ? '' : 's'}
             </span>
           )}
           <button
@@ -244,7 +254,7 @@ function ComplaintList() {
             </button>
           )}
           {canFileComplaint && (
-            <button type="button" className="btn btn-primary" onClick={() => navigate('/file-complaint')}>
+            <button type="button" className="btn btn-primary" onClick={() => navigate(showInformation ? '/informant-register/new' : '/file-complaint')}>
               <i className="bi bi-plus-circle me-1" />{fileComplaintLabel}
             </button>
           )}
@@ -330,17 +340,19 @@ function ComplaintList() {
               <div className="stat-box-label">On Stay</div>
             </div>
           </div>
-          <div className="stat-box" style={{ borderLeft: '3px solid #6d28d9' }}>
-            <div className="stat-box-icon" style={{ background: '#ede9fe', color: '#6d28d9' }}>
-              <i className="bi bi-cash-stack" />
-            </div>
-            <div>
-              <div className="stat-box-value" style={{ fontSize: '1.15rem' }}>
-                ₹{rows.reduce((s, r) => s + (Number(r.TaxableAmount) || 0), 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+          {!showInformation && (
+            <div className="stat-box" style={{ borderLeft: '3px solid #6d28d9' }}>
+              <div className="stat-box-icon" style={{ background: '#ede9fe', color: '#6d28d9' }}>
+                <i className="bi bi-cash-stack" />
               </div>
-              <div className="stat-box-label">Fee Collected</div>
+              <div>
+                <div className="stat-box-value" style={{ fontSize: '1.15rem' }}>
+                  ₹{rows.reduce((s, r) => s + (Number(r.TaxableAmount) || 0), 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                </div>
+                <div className="stat-box-label">Fee Collected</div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -348,7 +360,7 @@ function ComplaintList() {
         <div className="card-header">
           <div className="card-title">
             <i className="bi bi-funnel" />
-            Filter Complaints
+            {showInformation ? 'Filter Information' : 'Filter Complaints'}
           </div>
           {!isSubSO && (
             <span className="badge-soft badge-soft-neutral">
@@ -368,7 +380,7 @@ function ComplaintList() {
               <label className="form-label small fw-semibold">Search</label>
               <input
                 className="form-control"
-                placeholder="Complainant / Respondent / Comp No / Email / Reg..."
+                placeholder={showInformation ? 'Informant / Respondent / Information No / Email / Reg...' : 'Complainant / Respondent / Comp No / Email / Reg...'}
                 value={q.search}
                 onChange={(e) => setQ((prev) => ({ ...prev, search: e.target.value }))}
               />
@@ -427,7 +439,7 @@ function ComplaintList() {
               ? `No Action Taken${activeStatusName ? ` - ${statusText(activeStatusName.label)}` : ''}`
               : activeStatusName
                 ? statusText(activeStatusName.label)
-                : 'All Complaints'}
+                : (showInformation ? 'All Information' : 'All Complaints')}
           </div>
           {!isSubSO && <span className="badge-soft badge-soft-primary">{displayRows.length} shown</span>}
         </div>
@@ -464,13 +476,13 @@ function ComplaintList() {
                       </>
                     ) : (
                       <>
-                        <th>Complaint No</th>
-                        <th>Complainant</th>
+                        <th>{showInformation ? 'Information No' : 'Complaint No'}</th>
+                        <th>{showInformation ? 'Informant' : 'Complainant'}</th>
                         <th>Respondent</th>
                         <th>Type of Respondent</th>
                         <th>Date of Receipt</th>
                         <th className="text-center">Days Since Receipt</th>
-                        <th className="text-end">Fee Paid</th>
+                        {!showInformation && <th className="text-end">Fee Paid</th>}
                         <th>Current Status</th>
                         <th>Clubbed / Closure</th>
                         <th className="text-end" style={{ width: 140 }}>Action</th>
@@ -533,11 +545,13 @@ function ComplaintList() {
                       <td className="text-center">
                         <span className={`badge-soft ${daysTone(Number(c.DaysSinceEntry))}`}>{c.DaysSinceEntry ? `${c.DaysSinceEntry}d` : '—'}</span>
                       </td>
-                      <td className="text-end col-num">
-                        {c.TaxableAmount != null
-                          ? `₹${Number(c.TaxableAmount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-                          : '—'}
-                      </td>
+                      {!showInformation && (
+                        <td className="text-end col-num">
+                          {c.TaxableAmount != null
+                            ? `₹${Number(c.TaxableAmount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                            : '—'}
+                        </td>
+                      )}
                       <td>
                         <span className={`badge-soft ${statusTone(c.StatusName)}`}>
                           {c.StatusName}
@@ -577,7 +591,7 @@ function ComplaintList() {
                 {!aspxView && !isSubSO && (
                 <tfoot>
                   <tr>
-                    <td colSpan="7">Total</td>
+                    <td colSpan={showInformation ? '6' : '7'}>Total</td>
                     <td />
                     <td />
                     <td className="text-center fw-bold" style={{ fontSize: '1rem' }}>{displayRows.length}</td>

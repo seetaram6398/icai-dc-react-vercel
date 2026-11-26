@@ -16,7 +16,7 @@
 
 // Internal staff user types. UserType 14 is the Sub SO who files offline
 // complaints on behalf of a complainant.
-const INTERNAL_USER_TYPES = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14];
+const INTERNAL_USER_TYPES = [1, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16];
 // Users who are always treated as an outside party of a complaint.
 const EXTERNAL_USER_TYPES = [2, 3, 11];
 

@@ -69,7 +69,9 @@ router.get('/:type', (req, res, next) => {
         sqlStr = 'SELECT CityID AS value, UPPER(CityName) AS label FROM tbl_CityMaster ORDER BY CityName';
         break;
       case 12:
-        sqlStr = 'SELECT StatusID AS value, UPPER(StatusName) AS label FROM tbl_StatusMaster ORDER BY DisplayOrder';
+        sqlStr = ([15, 16].includes(Number(req.user?.UserType)) || req.query.informationScope === 'information')
+          ? 'SELECT StatusID AS value, UPPER(StatusName) AS label FROM tbl_StatusMaster WHERE StatusID IN (135, 136, 137) ORDER BY DisplayOrder'
+          : 'SELECT StatusID AS value, UPPER(StatusName) AS label FROM tbl_StatusMaster WHERE StatusID NOT IN (135, 136, 137) ORDER BY DisplayOrder';
         break;
       case 13:
         sqlStr = 'SELECT CYWiseID AS value, UPPER(CYName) AS label FROM tbl_Master_CY';
@@ -98,7 +100,7 @@ router.get('/:type', (req, res, next) => {
         params.o1 = option1;
         break;
       case 19:
-        sqlStr = "SELECT CompID AS value, CompNo AS label FROM tbl_NewComplaint WHERE CompID IN (SELECT CompID FROM tbl_CauseList WHERE CauseListID=@o1 AND (IsAdjour IS NULL OR IsAdjour=0))";
+        sqlStr = "SELECT CompID AS value, CompNo AS label FROM tbl_NewComplaint WHERE ISNULL(IsInformant, 0) = 0 AND CompID IN (SELECT CompID FROM tbl_CauseList WHERE CauseListID=@o1 AND (IsAdjour IS NULL OR IsAdjour=0))";
         params.o1 = option1;
         break;
       case 20:
@@ -115,7 +117,7 @@ router.get('/:type', (req, res, next) => {
         params.o1 = option1;
         break;
       case 24:
-        sqlStr = "SELECT CompID AS value, CompNo AS label FROM tbl_NewComplaint WHERE IsTemp='0'";
+        sqlStr = "SELECT CompID AS value, CompNo AS label FROM tbl_NewComplaint WHERE IsTemp='0' AND ISNULL(IsInformant, 0) = 0";
         break;
       case 25:
         sqlStr = "SELECT CompTypeID AS value, CompTypeName AS label FROM tbl_CompType WHERE IsGov='1'";
@@ -131,7 +133,7 @@ router.get('/:type', (req, res, next) => {
         params.o1 = option1;
         break;
       case 29:
-        sqlStr = 'SELECT CompID AS value, CompNo AS label FROM tbl_NewComplaint WHERE StatusID IN (36,34,25,41)';
+        sqlStr = 'SELECT CompID AS value, CompNo AS label FROM tbl_NewComplaint WHERE StatusID IN (36,34,25,41) AND ISNULL(IsInformant, 0) = 0';
         break;
       case 30:
         sqlStr = "SELECT UserID AS value, NameOfTheUser AS label FROM tbl_Users WHERE UserType=@o1 AND BMID IS NULL AND CanMarkDecision=1 ORDER BY NameOfTheUser";

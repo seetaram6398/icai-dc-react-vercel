@@ -15,6 +15,7 @@ function genCaptchaString() {
 }
 
 function defaultLanding(u) {
+  if ([15, 16].includes(Number(u?.UserType))) return '/informant-register';
   if (u?.UserType === 6) return '/bod-dashboard';
   if (Number(u?.UserType) === 13) return '/complaints?statusIds=124,133';
   if ([1, 4, 5, 7, 10, 11, 14].includes(Number(u?.UserType))) return '/complaints';

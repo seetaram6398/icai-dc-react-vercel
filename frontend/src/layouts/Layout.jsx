@@ -16,6 +16,8 @@ const ROLE_LABELS = {
   11: 'CAE',
   13: 'Vetting Officer',
   14: 'Sub SO',
+  15: 'Info Sub SO',
+  16: 'Info SO',
 };
 
 const PAGE_LABELS = {
@@ -27,6 +29,8 @@ const PAGE_LABELS = {
   '/my-defect-responses': 'My Defect Responses',
   '/withdrawal/update': 'Withdrawal of Complaint',
   '/file-complaint': 'File Complaint',
+  '/informant-register/new': 'Register Information',
+  '/informant-register': 'Information Register',
   '/agenda': 'Agenda',
   '/agenda/generate': 'Generate Agenda',
   '/hearings': 'Hearings',
@@ -61,6 +65,7 @@ const MY_COMPLAINTS_UT = [1, 2, 3, 4];
 const MEMBER_REPORTS_UT = [1, 2, 4];
 // Parties (UserType 2 / 3), DD and the Sub SO (offline complaints) can file.
 const FILE_UT = [1, 2, 3, 4, 14];
+const INFORMATION_UT = [15, 16];
 
 function initials(name = '') {
   return name
@@ -260,7 +265,7 @@ export default function Layout() {
 
           {ut === 3 && link('/file-complaint?type=I', fileComplaintLabel, 'plus-square')}
 
-          {!isFirmUser && [1, 2, 3].includes(ut) && link('/payment', 'Pay Complaint Fee', 'credit-card')}
+          {!isFirmUser && ut === 1 && link('/payment', 'Pay Complaint Fee', 'credit-card')}
 
           {ut !== 4 && (
             <>
@@ -271,6 +276,17 @@ export default function Layout() {
                   'plus-square',
                   <>
                     {fileFormSubLink('I', 'Form I')}
+                  </>
+                )}
+
+              {INFORMATION_UT.includes(ut) &&
+                navGroup(
+                  'information',
+                  'Information',
+                  'info-circle',
+                  <>
+                    {ut === 15 && link('/informant-register/new', 'Register Information', 'plus-square')}
+                    {subLink('/informant-register', ut === 15 ? 'My Information' : 'All Information')}
                   </>
                 )}
 

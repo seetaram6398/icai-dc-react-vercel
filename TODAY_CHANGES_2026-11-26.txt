@@ -1,0 +1,185 @@
+TODAY'S CHANGES - 2026-11-26
+Project: icai-dc-react-vercel
+
+1. SUMMARY
+- Added a separate Informant Register / Information workflow using UserType 15 (Info Sub SO) and UserType 16 (Info SO).
+- Regular complaint flow kept separate with IsInformant scoping everywhere.
+- Information records use PPR/NN/YYYY numbering; regular complaints keep PR numbering.
+- Information statuses: 135 = Information Submitted by Info Sub SO, 136 = Information Under Scrutiny by Info SO, 137 = Information Disposed.
+- Created permanent logins: infosubso@icai.in (UT15) and infoso@icai.in (UT16).
+- Local frontend proxy now points to local backend http://localhost:5000.
+- All emails are redirected to seetaram@idiary.in.
+- No commit was made for this session's info-work changes. Earlier defect communication commit 57a9417 was already pushed.
+
+2. DB CHANGES APPLIED LOCALLY - IDEMPOTENT SQL SCRIPT
+
+IF NOT EXISTS (SELECT 1 FROM dbo.tbl_UserTypes WHERE UserTypeID = 15)
+BEGIN
+  IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.tbl_UserTypes') AND name = N'UserTypeID' AND is_identity = 1)
+  BEGIN
+    SET IDENTITY_INSERT dbo.tbl_UserTypes ON;
+    INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb)
+    VALUES (15, N'Info Sub SO', N'015');
+    SET IDENTITY_INSERT dbo.tbl_UserTypes OFF;
+  END
+  ELSE
+  BEGIN
+    INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb)
+    VALUES (15, N'Info Sub SO', N'015');
+  END
+END
+
+IF NOT EXISTS (SELECT 1 FROM dbo.tbl_UserTypes WHERE UserTypeID = 16)
+BEGIN
+  IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.tbl_UserTypes') AND name = N'UserTypeID' AND is_identity = 1)
+  BEGIN
+    SET IDENTITY_INSERT dbo.tbl_UserTypes ON;
+    INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb)
+    VALUES (16, N'Info SO', N'016');
+    SET IDENTITY_INSERT dbo.tbl_UserTypes OFF;
+  END
+  ELSE
+  BEGIN
+    INSERT INTO dbo.tbl_UserTypes (UserTypeID, UserTypeName, UserAbb)
+    VALUES (16, N'Info SO', N'016');
+  END
+END
+
+IF COL_LENGTH(N'dbo.tbl_NewComplaint', N'IsInformant') IS NULL
+BEGIN
+  ALTER TABLE dbo.tbl_NewComplaint
+    ADD IsInformant BIT NOT NULL CONSTRAINT DF_tbl_NewComplaint_IsInformant DEFAULT (0);
+END
+
+IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 135)
+BEGIN
+  INSERT INTO dbo.tbl_StatusMaster
+    (StatusID, StatusName, DisplayOrder, SubStatus, MaxDays, CumulativeDays, UserTypeDD, UserTypeSO, StatusNameForAgenda)
+  VALUES
+    (135, 'Information Submitted by Info Sub SO', 135, 'Under Scrutiny', NULL, NULL, NULL, '16', 'Information Submitted by Info Sub SO');
+END
+
+IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 136)
+BEGIN
+  INSERT INTO dbo.tbl_StatusMaster
+    (StatusID, StatusName, DisplayOrder, SubStatus, MaxDays, CumulativeDays, UserTypeDD, UserTypeSO, StatusNameForAgenda)
+  VALUES
+    (136, 'Information Under Scrutiny by Info SO', 136, 'Under Scrutiny', NULL, NULL, NULL, '16', 'Information Under Scrutiny by Info SO');
+END
+
+IF NOT EXISTS (SELECT 1 FROM dbo.tbl_StatusMaster WHERE StatusID = 137)
+BEGIN
+  INSERT INTO dbo.tbl_StatusMaster
+    (StatusID, StatusName, DisplayOrder, SubStatus, MaxDays, CumulativeDays, UserTypeDD, UserTypeSO, StatusNameForAgenda)
+  VALUES
+    (137, 'Information Disposed', 137, NULL, NULL, NULL, NULL, '16', 'Information Disposed');
+END
+
+IF NOT EXISTS (SELECT 1 FROM dbo.tbl_Users WHERE LOWER(LTRIM(RTRIM(Email))) = 'infosubso@icai.in')
+BEGIN
+  INSERT INTO dbo.tbl_Users
+    (LoginID, NameOfTheUser, Email, Mob, UserType, IsDeactivated, IsVerify, RegisterDate)
+  VALUES
+    ('infosubso@icai.in', N'Info Sub SO', 'infosubso@icai.in', '9999999999', 15, 0, 1, GETDATE());
+END
+
+IF NOT EXISTS (SELECT 1 FROM dbo.tbl_Users WHERE LOWER(LTRIM(RTRIM(Email))) = 'infoso@icai.in')
+BEGIN
+  INSERT INTO dbo.tbl_Users
+    (LoginID, NameOfTheUser, Email, Mob, UserType, IsDeactivated, IsVerify, RegisterDate)
+  VALUES
+    ('infoso@icai.in', N'Info SO', 'infoso@icai.in', '9999999999', 16, 0, 1, GETDATE());
+END
+
+3. NEW LOGINS
+- infosubso@icai.in  | UserType 15 | Info Sub SO | local UserID 1214
+- infoso@icai.in     | UserType 16 | Info SO     | local UserID 1215
+- Login is OTP based. OTP/mail goes to seetaram@idiary.in because MAIL_REDIRECT_TO is set.
+
+4. ENV CHANGES - backend/.env
+- MAIL_REDIRECT_TO=seetaram@idiary.in   (already configured; all sendMail() calls use it)
+- FIXED_INFO_SO_EMAIL=infoso@icai.in    (added today; backend restarted)
+
+5. CODE CHANGES
+Backend:
+- backend/db/migrate_information_workflow.sql - new migration for roles, IsInformant, statuses 135-137.
+- backend/db/sync_project_db.sql - central sync updated with IsInformant, roles 15/16, statuses 135-137.
+- backend/src/routes/complaints.js - Information create/list/detail/status/export/search/lookup/similar/clubbed-list guards; PPR numbering; regular numbering excludes IsInformant; Information PDF labels; similar/export/dropdown scoping.
+- backend/src/routes/auth.js - isFirmUser lookup excludes Information records.
+- backend/src/routes/dashboard.js - regular/Info dashboard scoping and status IDs.
+- backend/src/routes/masters.js - status master and complaint dropdown scoping.
+- backend/src/routes/reports.js - regular reports exclude Information records.
+- backend/src/routes/stay.js - regular stay search excludes Information records.
+- backend/src/services/complaintAccess.js - internal roles include 15 and 16.
+- backend/src/services/formPdf.js - Information wording and Fee Not Applicable.
+
+Frontend:
+- frontend/src/App.jsx - /informant-register routes.
+- frontend/src/layouts/Layout.jsx - role/page labels and Information sidebar for UT15/16; unrelated pre-existing payment link condition change still present.
+- frontend/src/pages/Login.jsx - UT15/16 redirect to /informant-register.
+- frontend/src/pages/FileComplaint.jsx - informationMode, Information labels, fee/preview/signature hidden, info payload.
+- frontend/src/pages/InformantRegister.jsx - new UT15-only form wrapper.
+- frontend/src/pages/InformantRegisterList.jsx - new UT1/15/16 list wrapper.
+- frontend/src/pages/InformantDetail.jsx - new info detail with status 136/137 and Rule 5(4) club/unlink.
+- frontend/src/pages/ComplaintList.jsx - informationMode, info columns/labels/export filename.
+- frontend/src/pages/ComplaintDetail.jsx - earlier defect communication signature fix (already committed).
+- backend/src/services/defectCatalog.js - earlier defect label fixes (already committed).
+- frontend/vite.config.js - /api and /documents proxy changed to http://localhost:5000.
+
+6. VERIFICATION DONE
+- node --check on changed backend files: passed.
+- npm run build: passed with existing chunk-size warning.
+- git diff --check: passed.
+- Real OTP login API test: 21/21 passed.
+- Permanent account login verified: UT15 = 15, UT16 = 16.
+- Info record created via UT15, auto-forwarded to status 136; disposed to 137 by UT16.
+- Regular complaint serial stayed 9 -> 9, unaffected by Information record.
+- Temporary smoke users/test records were cleaned up; no leftovers.
+
+7. PENDING
+- Apply the SQL script above on target/production DB.
+- Set MAIL_REDIRECT_TO and FIXED_INFO_SO_EMAIL in deployed environment as needed.
+- Production live smoke test after deploy.
+- Commit is still pending for this session's changes.
+
+8. FORM I PDF TEMPLATE CHANGE
+- Source template: C:\Users\Transoft\Downloads\Form_I_Complaint_Template.docx
+- backend/src/services/formPdf.js: Information records now render the official Form I layout from that DOCX:
+  FORM I, [See sub-rule (1) of Rule 3], 7 numbered sections, Date/Place/Signature, and VERIFICATION block.
+  Values filled from the Information record: complainant/informant name + membership no, respondent + registration no,
+  complainant communication address, respondent professional address, allegations + Schedule/Part/Item, evidence index,
+  persons with knowledge, and verification date/place/signature.
+- For Information records, Form A rows, fee row, defect sheet, status history and Form A verification text are skipped.
+- Attached evidence pages are still appended after the Form I page with heading "Documents Attached to this Information".
+- Verified by generating a sample Information PDF and extracting text with pdftotext; output matched the supplied template.
+- Backend restarted cleanly and the live API endpoint GET /api/complaints/:id/form/pdf was re-tested with pdftotext; it now returns the new Form I layout.
+
+9. FORM I PDF EXACT TEMPLATE MATCH (DOCX)
+- backend/src/services/formPdf.js: Information PDF now follows C:\Users\Transoft\Downloads\Form_I_Complaint_Template.docx exactly:
+  4-column bordered table with widths 490 / 3960 / 605 / 4824 dxa, border color #333333 and 0.875 pt width.
+  Font is embedded Calibri / Calibri Bold with fallback to Helvetica when Windows fonts are unavailable.
+  Header FORM I = 11 pt bold, [See sub-rule (1) of Rule 3] = 9 pt bold, VERIFICATION = 10 pt bold, body = 11 pt.
+  Labels and dotted lines now match the DOCX wording, including the blank spacer column and separate borderless Date/Place / Signature tables.
+  Page number footer is skipped for Information records, matching the template.
+- Added dependency @pdf-lib/fontkit for custom Calibri font embedding; doc.registerFontkit(fontkit) is used before embedFont.
+- Verified via live GET /api/complaints/:id/form/pdf and pdftotext: output matches the supplied Form I template structure.
+
+10. FORM I PDF EXACT DOTTED PLACEHOLDERS
+- backend/src/services/formPdf.js: Dotted placeholders now use the exact DOCX counts, wrapped into the 4th table column:
+  216 dots for rows 1/2 and missing addresses, 24 dots after "Pin Code:", 48 dots per row-5 allegation line,
+  144 dots for rows 6/7, 36 dots for the verification name, and 24-dot day/month/place with "20........" year placeholder.
+- Actual information values still replace placeholders when present; missing values fall back to the exact dot counts instead of "--".
+- Verified via live GET /api/complaints/:id/form/pdf and pdftotext: row 3 Pin Code and verification place now show 24 dots, rows 4/6 show 216/144 dots, row 5 shows 48 dots per line.
+
+11. REGULAR COMPLAINT PDF - FORM I DOCX LAYOUT
+- backend/src/services/formPdf.js: Regular complaints (IsInformant=0) now use the same official Form I DOCX layout for the main form page; the old Appendix-I / Form A layout is no longer rendered.
+- Regular workflow data retained after the Form I page: defects under Rule 5(5) (when present), status history for compilation, defect-sheet PDF, page footers, and uploaded document pages.
+- Information records keep the same Form I layout with Information-specific wording and no page footer.
+- Verified with PR/G/001/2026: C:\Users\Transoft\Downloads\PR_G_001_2026_formI.pdf starts with FORM I, [See sub-rule (1) of Rule 3], 7 sections and VERIFICATION, followed by "Documents Attached to this Complaint".
+
+12. INFORMATION PDF WORDING
+- backend/src/services/formPdf.js: For Information records only, "Complainant" is now "Informant" and "complaint" is now "information" in the Form I template:
+  "Name of the Informant", "against whom information is being made", "Latest address of the informant",
+  "against whom the information is made", "Signature of the Informant", and "I, ..., the Informant, do hereby declare...".
+- Regular complaints keep the original "Complainant"/"complaint" wording.
+- Verified both paths via live PDF generation: information PDF shows Informant/information wording; PR/G/001/2026 still shows Complainant.

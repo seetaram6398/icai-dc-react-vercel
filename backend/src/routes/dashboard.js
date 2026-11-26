@@ -5,16 +5,18 @@ const { authMiddleware } = require('../services/auth');
 const router = express.Router();
 router.use(authMiddleware);
 
+const INFORMATION_STATUS_IDS = [135, 136, 137];
+
 // Shared FROM clause. Mirrors the complaint list (complaints.js buildListQuery):
 // deduplicates by CompNo keeping the latest record, so dashboard counts always
 // match the Complaint Register. Statuses with no complaints are still shown.
 const DASHBOARD_FROM = `
   SELECT sm.StatusID, sm.StatusName, sm.DisplayOrder, sm.MaxDays, sm.CumulativeDays,
          sm.UserTypeDD, sm.UserTypeSO, sm.SubStatus, nc.EntryDate, nc.CompID,
-         nc.CompType, nc.IsFirm
+         nc.CompType, nc.IsFirm, nc.IsInformant
   FROM tbl_StatusMaster sm
   LEFT JOIN (
-    SELECT nc.CompID, nc.CompNo, nc.StatusID, nc.EntryDate, nc.CompType, nc.IsFirm,
+    SELECT nc.CompID, nc.CompNo, nc.StatusID, nc.EntryDate, nc.CompType, nc.IsFirm, nc.IsInformant,
       ROW_NUMBER() OVER (
         PARTITION BY ISNULL(nc.CompNo, CONVERT(varchar(50), nc.CompID))
         ORDER BY (SELECT MAX(cs.StatusDate) FROM tbl_ComplaintStatus cs WHERE cs.CompaintID = nc.CompID) DESC, nc.CompID DESC
@@ -35,6 +37,14 @@ router.get('/', async (req, res) => {
     const { dateFrom, dateTo, subStatus, compTypeId, isFirm, statusId, stayOnly, suoMoto } = req.query;
     const params = {};
     const conds = [];
+
+    if ([15, 16].includes(userType)) {
+      conds.push('IsInformant=1');
+      conds.push(`StatusID IN (${INFORMATION_STATUS_IDS.join(', ')})`);
+    } else {
+      conds.push('ISNULL(IsInformant, 0)=0');
+      conds.push(`StatusID NOT IN (${INFORMATION_STATUS_IDS.join(', ')})`);
+    }
 
     if (dateFrom) {
       conds.push('EntryDate >= @dateFrom');
@@ -75,9 +85,7 @@ router.get('/', async (req, res) => {
       conds.push('vw_DashBoard.CompID IN (SELECT CompID FROM tbl_NewComplaint WHERE UserID=@userId)');
       params.userId = String(req.user.UserID);
     }
-    if (userType === 14) {
-      // Sub SO sees only the offline complaints they submitted (recorded in the
-      // status history with their user id).
+    if (userType === 14 || userType === 15) {
       conds.push(
         'vw_DashBoard.CompID IN (SELECT CompaintID FROM tbl_ComplaintStatus WHERE UserID=@userId)'
       );

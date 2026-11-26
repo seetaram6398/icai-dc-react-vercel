@@ -40,7 +40,7 @@ router.get('/ageing', async (req, res) => {
       FROM tbl_NewComplaint nc
       ${statusFilter}
       INNER JOIN tbl_StatusMaster sm ON nc.StatusID = sm.StatusID
-      WHERE 1=1 ${where}
+      WHERE 1=1 AND ISNULL(nc.IsInformant, 0) = 0 ${where}
       GROUP BY sm.StatusName
       ORDER BY sm.StatusName`;
 
@@ -67,7 +67,7 @@ router.get('/stage-bifurcation', async (req, res) => {
           SUM(CASE WHEN ct.IsGov=0 AND nc.IsTemp=0 THEN 1 ELSE 0 END) AS NonA,
           SUM(CASE WHEN nc.IsTemp=0 THEN 1 ELSE 0 END) AS Total
         FROM tbl_StatusMaster sm
-        LEFT JOIN tbl_NewComplaint nc ON sm.StatusID = nc.StatusID AND nc.IsTemp=0
+        LEFT JOIN tbl_NewComplaint nc ON sm.StatusID = nc.StatusID AND nc.IsTemp=0 AND ISNULL(nc.IsInformant, 0) = 0
         LEFT JOIN tbl_CompType ct ON nc.CompType = ct.CompTypeID
         GROUP BY sm.StatusName, sm.DisplayOrder
         ORDER BY sm.DisplayOrder`;
@@ -75,7 +75,7 @@ router.get('/stage-bifurcation', async (req, res) => {
       sqlStr = `
         SELECT sm.StatusName, COUNT(nc.CompID) AS TotalCount
         FROM tbl_StatusMaster sm
-        LEFT JOIN tbl_NewComplaint nc ON sm.StatusID = nc.StatusID AND nc.IsTemp=0
+        LEFT JOIN tbl_NewComplaint nc ON sm.StatusID = nc.StatusID AND nc.IsTemp=0 AND ISNULL(nc.IsInformant, 0) = 0
         GROUP BY sm.StatusName, sm.DisplayOrder
         ORDER BY sm.DisplayOrder`;
     }
@@ -132,7 +132,7 @@ router.get('/complaint-status', async (req, res) => {
               nc.NatureOfAllegation, nc.NatureDatails,
               CAST(DATEDIFF(day, nc.EntryDate, GETDATE()) AS int) AS PendingSince
        FROM tbl_NewComplaint nc
-       WHERE nc.StatusID=@sid AND ${where}
+       WHERE nc.StatusID=@sid AND ISNULL(nc.IsInformant, 0) = 0 AND ${where}
        ORDER BY nc.EntryDate`,
       { sid: Number(sid) }
     );
@@ -180,7 +180,7 @@ router.get('/member-ageing', async (req, res) => {
       FROM tbl_NewComplaint nc
       ${statusFilter}
       INNER JOIN tbl_StatusMaster sm ON nc.StatusID = sm.StatusID
-      WHERE nc.UserID=@userId ${where}
+      WHERE nc.UserID=@userId AND ISNULL(nc.IsInformant, 0) = 0 ${where}
       GROUP BY sm.StatusName
       ORDER BY sm.StatusName`;
 
@@ -227,7 +227,7 @@ router.get('/member-complaint-status', async (req, res) => {
               CAST(DATEDIFF(day, nc.EntryDate, GETDATE()) AS int) AS PendingSince
        FROM tbl_NewComplaint nc
        INNER JOIN tbl_StatusMaster sm ON nc.StatusID = sm.StatusID
-       WHERE nc.StatusID=@sid AND nc.UserID=@userId AND ${where}
+       WHERE nc.StatusID=@sid AND nc.UserID=@userId AND ISNULL(nc.IsInformant, 0) = 0 AND ${where}
        ORDER BY nc.EntryDate`,
       { sid: Number(sid), userId: String(userId) }
     );
@@ -255,7 +255,7 @@ router.get('/payment-details', async (req, res) => {
       LEFT JOIN tbl_StateMaster sm ON nc.StateID = sm.StateID
       LEFT JOIN tbl_PaymentMode pm ON nc.PaymentMode = pm.PaymentModeID
       LEFT JOIN tbl_StatusMaster sm1 ON nc.StatusID = sm1.StatusID
-      WHERE nc.TaxableAmount > 0`;
+      WHERE nc.TaxableAmount > 0 AND ISNULL(nc.IsInformant, 0) = 0`;
     const params = {};
     const like = (v) => `%${String(v).trim()}%`;
     if (compNo) { sqlStr += ' AND nc.CompNo LIKE @compNo'; params.compNo = like(compNo); }

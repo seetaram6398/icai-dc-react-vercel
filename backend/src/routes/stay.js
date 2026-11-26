@@ -14,28 +14,30 @@ router.get('/search', async (req, res) => {
   try {
     const { caseNo, dateFrom, dateTo, search } = req.query;
     let sqlStr = `
-      SELECT CompID, FormType, CompNo, Name, CompTypeName, ResName,
-             ResRegistrationNo, EntryDate, StatusName
-      FROM vw_NewComplaint WHERE CompID > 0`;
+      SELECT v.CompID, v.FormType, v.CompNo, v.Name, v.CompTypeName, v.ResName,
+             v.ResRegistrationNo, v.EntryDate, v.StatusName
+      FROM vw_NewComplaint v
+      INNER JOIN tbl_NewComplaint nc ON nc.CompID = v.CompID
+      WHERE v.CompID > 0 AND ISNULL(nc.IsInformant, 0) = 0`;
     const params = {};
     if (caseNo) {
-      sqlStr += ' AND CompID=@caseNo';
+      sqlStr += ' AND v.CompID=@caseNo';
       params.caseNo = Number(caseNo);
     }
     if (dateFrom) {
-      sqlStr += ' AND EntryDate >= @dateFrom';
+      sqlStr += ' AND v.EntryDate >= @dateFrom';
       params.dateFrom = `${dateFrom} 00:00:00`;
     }
     if (dateTo) {
-      sqlStr += ' AND EntryDate <= @dateTo';
+      sqlStr += ' AND v.EntryDate <= @dateTo';
       params.dateTo = `${dateTo} 23:59:59`;
     }
     if (search) {
       const like = `%${String(search).trim()}%`;
-      sqlStr += ' AND (CompNo LIKE @s OR Name LIKE @s OR ResName LIKE @s OR ResRegistrationNo LIKE @s)';
+      sqlStr += ' AND (v.CompNo LIKE @s OR v.Name LIKE @s OR v.ResName LIKE @s OR v.ResRegistrationNo LIKE @s)';
       params.s = like;
     }
-    sqlStr += ' ORDER BY EntryDate DESC';
+    sqlStr += ' ORDER BY v.EntryDate DESC';
     const rows = await query(sqlStr, params);
     res.json(rows);
   } catch (e) {

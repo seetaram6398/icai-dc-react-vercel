@@ -284,6 +284,7 @@ router.get('/me', authMiddleware, async (req, res) => {
       const firmRows = await query(
         `SELECT TOP 1 1 AS v FROM tbl_NewComplaint
          WHERE IsFirm=1 AND LOWER(LTRIM(RTRIM(ResEmailID)))=@email
+           AND ISNULL(IsInformant, 0) = 0
            AND (IsTemp IS NULL OR IsTemp = 0)`,
         { email: email.toLowerCase() }
       );
