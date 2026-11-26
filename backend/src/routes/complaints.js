@@ -367,16 +367,21 @@ async function ensureComplainantUserForSubSO(party = {}) {
 // then all filters are applied on the deduped set — exactly like the dashboard —
 // so Dashboard counts always match what the complaint window displays.
 function buildListQuery(filters, user) {
-  const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, compIds, informationScope } = filters;
+  const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, compIds, informationScope, complaintMode } = filters;
   let sqlStr = `
-      SELECT CompID, CompNo, IsInformant, ResName, FirmNo, IsFirm, EntryDate, StatusID,
+      SELECT CompID, CompNo, IsInformant, IsOffline, ResName, FirmNo, IsFirm, EntryDate, StatusID,
              StatusName, CompTypeName, ComplainantName, DaysSinceEntry,
              TaxableAmount, IsStay, EmailID, MobileNo, ResMobileNo, ResProfAddress,
              Address, Landmark, Region, RStateName, RCityname, RelationName,
              AadharNo, GSTINNo, ResLandlineNo, FormType, NameofFirm, ResRegistrationNo,
              ClubbedWithCompID, ClubbedWithCompNo, ClubRule, ClubbedAgainstCount, PendingDefectCount
       FROM (
-        SELECT nc.CompID, nc.CompNo, nc.IsInformant, nc.ResName, nc.FirmNo, nc.IsFirm, nc.EntryDate, nc.StatusID,
+        SELECT nc.CompID, nc.CompNo, nc.IsInformant,
+               CASE WHEN EXISTS (
+                 SELECT 1 FROM tbl_ComplaintStatus cs
+                 WHERE cs.CompaintID = nc.CompID AND cs.StatusID = 134
+               ) THEN 1 ELSE 0 END AS IsOffline,
+               nc.ResName, nc.FirmNo, nc.IsFirm, nc.EntryDate, nc.StatusID,
                nc.TaxableAmount, nc.IsStay, nc.EmailID, nc.MobileNo, nc.ResMobileNo,
                nc.ResProfAddress, nc.Address, nc.Landmark, nc.Region, nc.RStateName,
                nc.RCityname, nc.RelationName, nc.AadharNo, nc.GSTINNo, nc.ResLandlineNo,
@@ -413,6 +418,12 @@ function buildListQuery(filters, user) {
     conds.push('t.IsInformant = 1');
   } else {
     conds.push('ISNULL(t.IsInformant, 0) = 0');
+  }
+
+  if (complaintMode && isInternalUser(user)) {
+    const mode = String(complaintMode).toLowerCase();
+    if (mode === 'offline') conds.push('t.IsOffline = 1');
+    else if (mode === 'online') conds.push('t.IsOffline = 0');
   }
 
   let ids = statusIds ? String(statusIds).split(',').map(Number).filter(Boolean) : [];
@@ -549,8 +560,8 @@ async function resolveSOFromStatement(compId) {
  */
 router.get('/', async (req, res) => {
   try {
-    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending, informationScope } = req.query;
-    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, informationScope };
+    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending, informationScope, complaintMode } = req.query;
+    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, informationScope, complaintMode };
     if (actionPending === '1' || actionPending === 'true') {
       filters.compIds = await findPartyActionPendingIds(req.user);
     }
@@ -569,14 +580,15 @@ router.get('/', async (req, res) => {
  */
 router.get('/export', async (req, res) => {
   try {
-    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending, informationScope } = req.query;
-    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, informationScope };
+    const { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, actionPending, informationScope, complaintMode } = req.query;
+    const filters = { statusIds, assignedTo, complainantId, respondentFor, search, dateFrom, dateTo, informationScope, complaintMode };
     if (actionPending === '1' || actionPending === 'true') {
       filters.compIds = await findPartyActionPendingIds(req.user);
     }
     const { sqlStr, params } = buildListQuery(filters, req.user);
     const rows = await query(sqlStr, params);
     const isInformationExport = INFORMATION_ROLES.includes(Number(req.user.UserType)) || informationScope === 'information';
+    const includeMode = !isInformationExport && isInternalUser(req.user);
 
     const header = isInformationExport
       ? [
@@ -621,6 +633,7 @@ router.get('/export', async (req, res) => {
           'Relation Name',
           'Aadhar No',
           'GSTIN No',
+          ...(includeMode ? ['Mode'] : []),
         ];
     const columns = [
       'CompNo',
@@ -643,6 +656,7 @@ router.get('/export', async (req, res) => {
       'RelationName',
       'AadharNo',
       'GSTINNo',
+      ...(includeMode ? ['IsOffline'] : []),
     ];
 
     // The exported sheet is user-facing, so the internal classification words
@@ -650,6 +664,7 @@ router.get('/export', async (req, res) => {
     // <select> values).
     const esc = (r, c) => {
       if (c === 'StatusName') return csvCell(statusText(r[c]));
+      if (c === 'IsOffline') return csvCell(Number(r.IsOffline) === 1 ? 'Offline' : 'Online');
       return c === 'EntryDate' ? csvCell(fmtDate(r[c])) : csvCell(r[c]);
     };
     const lines = [header.map(csvCell).join(',')];

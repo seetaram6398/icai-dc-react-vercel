@@ -9,7 +9,7 @@ Project: icai-dc-react-vercel
 - Created permanent logins: infosubso@icai.in (UT15) and infoso@icai.in (UT16).
 - Local frontend proxy now points to local backend http://localhost:5000.
 - All emails are redirected to seetaram@idiary.in.
-- No commit was made for this session's info-work changes. Earlier defect communication commit 57a9417 was already pushed.
+- Info-work and Form I changes were committed as 4104864 (Add information workflow and Form I PDF templates) and pushed to origin/main. Earlier defect communication commit 57a9417 was already pushed.
 
 2. DB CHANGES APPLIED LOCALLY - IDEMPOTENT SQL SCRIPT
 
@@ -183,3 +183,14 @@ Frontend:
   "against whom the information is made", "Signature of the Informant", and "I, ..., the Informant, do hereby declare...".
 - Regular complaints keep the original "Complainant"/"complaint" wording.
 - Verified both paths via live PDF generation: information PDF shows Informant/information wording; PR/G/001/2026 still shows Complainant.
+
+13. INTERNAL COMPLAINT MODE FILTER - ONLINE / OFFLINE
+- backend/src/routes/complaints.js: list query now computes IsOffline from tbl_ComplaintStatus history (StatusID = 134 = "Offline complaint submitted by Sub SO").
+- Added complaintMode=online|offline query filter for internal users only; information records remain excluded from regular list.
+- GET /api/complaints/export accepts the same complaintMode filter and includes a Mode column for internal regular-complaint exports.
+- frontend/src/pages/ComplaintList.jsx: added Complaint Mode filter for internal staff (hidden for parties, Information mode and Sub SO), plus an Online/Offline badge column in complaint records.
+- frontend/src/pages/ComplaintDetail.jsx: internal users now see an Online complaint / Offline complaint badge in the detail header.
+- Filter state is preserved in URL and in CSV export, alongside existing status/action/date/search filters.
+- Verified via live API as UT5: complaintMode=offline returned 3 records all IsOffline=1; complaintMode=online returned 6 records all IsOffline=0.
+- Verified CSV export with complaintMode=offline: 3 rows, Mode header present, every row marked Offline.
+- Verified node --check, npm run build (frontend), and git diff --check.

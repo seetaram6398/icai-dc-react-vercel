@@ -3227,6 +3227,14 @@ export default function ComplaintDetail() {
             <p className="page-subtitle">
               {c.CompTypeName || 'Complaint'} · filed by {c.ComplainantName || '—'}
             </p>
+            {viewerIsInternal && (
+              <span
+                className={`badge-soft ${offlineSubmission ? 'badge-soft-warning' : 'badge-soft-success'} mt-2`}
+                title={offlineSubmission ? 'Filed offline by the Sub SO' : 'Filed online by the complainant'}
+              >
+                {offlineSubmission ? 'Offline complaint' : 'Online complaint'}
+              </span>
+            )}
           </div>
         </div>
         <div className="page-header-actions">

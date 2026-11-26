@@ -51,6 +51,9 @@ function ComplaintList({ informationMode = false }) {
   const showClubbingDetails = [1, 4, 5].includes(ut);
   const statusIds = searchParams.get('statusIds') || '';
   const actionPending = searchParams.get('actionPending') === '1';
+  const complaintMode = searchParams.get('complaintMode') || '';
+  const showModeFilter = !isParty && !showInformation && !isSubSO;
+  const showModeColumn = !isParty && !showInformation;
   const [draft, setDraft] = useState(statusIds);
   const [q, setQ] = useState({ search: '', dateFrom: '', dateTo: '' });
 
@@ -69,6 +72,7 @@ function ComplaintList({ informationMode = false }) {
     if (showInformation) params.set('informationScope', 'information');
     if (statusIds) params.set('statusIds', statusIds);
     if (actionPending) params.set('actionPending', '1');
+    if (complaintMode) params.set('complaintMode', complaintMode);
     if (ut === 3) params.set('complainantId', user.UserID);
     if (ut === 2) params.set('respondentFor', user.Email);
     if (q.search) params.set('search', q.search);
@@ -80,7 +84,7 @@ function ComplaintList({ informationMode = false }) {
       .then((res) => setRows(res.data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [statusIds, actionPending, q.search, q.dateFrom, q.dateTo, ut, user?.UserID]);
+  }, [statusIds, actionPending, complaintMode, q.search, q.dateFrom, q.dateTo, ut, user?.UserID]);
 
   useEffect(() => {
     if (!isParty) return;
@@ -110,6 +114,15 @@ function ComplaintList({ informationMode = false }) {
     const params = new URLSearchParams();
     if (ids) params.set('statusIds', ids);
     if (actionPending) params.set('actionPending', '1');
+    if (complaintMode) params.set('complaintMode', complaintMode);
+    setSearchParams(params);
+  };
+
+  const applyMode = (mode) => {
+    const params = new URLSearchParams();
+    if (statusIds) params.set('statusIds', statusIds);
+    if (actionPending) params.set('actionPending', '1');
+    if (mode) params.set('complaintMode', mode);
     setSearchParams(params);
   };
 
@@ -132,6 +145,7 @@ function ComplaintList({ informationMode = false }) {
     if (showInformation) params.set('informationScope', 'information');
     if (statusIds) params.set('statusIds', statusIds);
     if (actionPending) params.set('actionPending', '1');
+    if (complaintMode) params.set('complaintMode', complaintMode);
     if (q.search) params.set('search', q.search);
     if (q.dateFrom) params.set('dateFrom', q.dateFrom);
     if (q.dateTo) params.set('dateTo', q.dateTo);
@@ -373,10 +387,15 @@ function ComplaintList({ informationMode = false }) {
                   : 'All stages'}
             </span>
           )}
+          {showModeFilter && complaintMode && (
+            <span className="badge-soft badge-soft-primary">
+              {complaintMode === 'offline' ? 'Offline complaints' : 'Online complaints'}
+            </span>
+          )}
         </div>
         <div className="card-body">
           <form className="row g-3 align-items-end" onSubmit={(e) => { e.preventDefault(); applyFilter(draft.replace(/\s/g, '')); }}>
-            <div className={isSubSO ? 'col-md-4' : 'col-md-3'}>
+            <div className={isSubSO ? 'col-md-4' : showModeFilter ? 'col-md-2' : 'col-md-3'}>
               <label className="form-label small fw-semibold">Search</label>
               <input
                 className="form-control"
@@ -418,7 +437,17 @@ function ComplaintList({ informationMode = false }) {
                 </select>
               </div>
             )}
-            <div className={`${isSubSO ? 'col-md-4' : 'col-md-3'} d-flex gap-2 justify-content-md-end`}>
+            {showModeFilter && (
+              <div className="col-md-2">
+                <label className="form-label small fw-semibold">Complaint Mode</label>
+                <select className="form-select" value={complaintMode} onChange={(e) => applyMode(e.target.value)}>
+                  <option value="">All Modes</option>
+                  <option value="online">Online</option>
+                  <option value="offline">Offline</option>
+                </select>
+              </div>
+            )}
+            <div className={`${isSubSO ? 'col-md-4' : showModeFilter ? 'col-md-2' : 'col-md-3'} d-flex gap-2 justify-content-md-end`}>
               <button type="submit" className="btn btn-primary" disabled={loading}>
                 <i className={`${loading ? 'spinner-border spinner-border-sm me-1' : 'bi bi-search me-1'}`} role="status" aria-hidden="true" />
                 {loading ? 'Loading...' : 'Apply'}
@@ -480,6 +509,7 @@ function ComplaintList({ informationMode = false }) {
                         <th>{showInformation ? 'Informant' : 'Complainant'}</th>
                         <th>Respondent</th>
                         <th>Type of Respondent</th>
+                        {showModeColumn && <th>Mode</th>}
                         <th>Date of Receipt</th>
                         <th className="text-center">Days Since Receipt</th>
                         {!showInformation && <th className="text-end">Fee Paid</th>}
@@ -541,6 +571,13 @@ function ComplaintList({ informationMode = false }) {
                         {c.IsFirm ? <div className="small text-muted">{c.FirmNo}</div> : null}
                       </td>
                       <td className="text-muted">{c.CompTypeName || '—'}</td>
+                      {showModeColumn && (
+                        <td>
+                          <span className={`badge-soft ${Number(c.IsOffline) === 1 ? 'badge-soft-warning' : 'badge-soft-success'}`}>
+                            {Number(c.IsOffline) === 1 ? 'Offline' : 'Online'}
+                          </span>
+                        </td>
+                      )}
                       <td className="text-muted col-num">{c.EntryDate ? new Date(c.EntryDate).toLocaleDateString('en-GB') : '—'}</td>
                       <td className="text-center">
                         <span className={`badge-soft ${daysTone(Number(c.DaysSinceEntry))}`}>{c.DaysSinceEntry ? `${c.DaysSinceEntry}d` : '—'}</span>
@@ -591,7 +628,7 @@ function ComplaintList({ informationMode = false }) {
                 {!aspxView && !isSubSO && (
                 <tfoot>
                   <tr>
-                    <td colSpan={showInformation ? '6' : '7'}>Total</td>
+                    <td colSpan={(showInformation ? 6 : 7) + (showModeColumn ? 1 : 0)}>Total</td>
                     <td />
                     <td />
                     <td className="text-center fw-bold" style={{ fontSize: '1rem' }}>{displayRows.length}</td>
