@@ -92,6 +92,24 @@ function buildDefectCommunicationHtml(codes, catalog, customDefects) {
     .join('');
 }
 
+// CKEditor rewrites the HTML we push into it (<br/> becomes <br>, entities are
+// re-encoded, etc.). Compare the visible text instead of raw markup so that the
+// auto-filled communication is still recognised as ours on the next selection.
+function communicationSignature(html) {
+  return String(html || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/(p|div|li)>/gi, ' ')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Default body of the final communication letter. The "From" block and the
 // closing block are added by the CommunicationEditor itself.
 function buildCommunicationBody({ compNo, resName, clubbedWithCompNo, entryDate }) {
@@ -2271,7 +2289,10 @@ export default function ComplaintDetail() {
       ? [{ ...soCustomDefect, code: 'OTHER', label: soCustomDefect.question.trim() }]
       : [];
     const generated = buildDefectCommunicationHtml(soDefectCodes, soDefectCatalog, custom);
-    setSoRemarks((prev) => (!prev || prev === soAutoCommunicationRef.current ? generated : prev));
+    const previousSignature = communicationSignature(soAutoCommunicationRef.current);
+    setSoRemarks((prev) =>
+      !prev || communicationSignature(prev) === previousSignature ? generated : prev
+    );
     soAutoCommunicationRef.current = generated;
   }, [soAction, soDefectCodes, soDefectCatalog, soOtherDefect, soCustomDefect]);
 
@@ -4467,9 +4488,9 @@ export default function ComplaintDetail() {
                              .filter((defect) => {
                                const q = soDefectSearch.trim().toLowerCase();
                                if (!q) return true;
-                                return `${defect.code} ${defect.label} ${defect.relevantColumn || ''} ${(defect.fieldTargets || []).join(' ')}`
-                                  .toLowerCase()
-                                  .includes(q);
+                                 return `${defect.serial ?? ''} ${defect.code} ${defect.label} ${defect.relevantColumn || ''} ${(defect.fieldTargets || []).join(' ')}`
+                                   .toLowerCase()
+                                   .includes(q);
                              })
                              .map((defect) => {
                                const code = String(defect.code);
@@ -4490,8 +4511,10 @@ export default function ComplaintDetail() {
                                      }
                                    />
                                     <label className="form-check-label small" htmlFor={`soDefect${code}`}>
-                                      <span className="badge-soft badge-soft-neutral me-1">{code}</span>
-                                      {defect.label}
+                                       <span className="badge-soft badge-soft-neutral me-1">
+                                         S.No. {defect.serial ?? code}
+                                       </span>
+                                       {defect.label}
                                       {(defect.fieldTargets?.length || defect.relevantColumn) && (
                                         <div className="text-muted mt-1">
                                           <i className="bi bi-input-cursor-text me-1" />

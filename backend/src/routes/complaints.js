@@ -1127,10 +1127,11 @@ router.get('/lookup', async (req, res) => {
 // remarks and each defect is stored separately on the complaint.
 router.get('/defect-catalog', (req, res) => {
   res.json({
-    defects: getDefects().map((d) => {
+    defects: getDefects().map((d, index) => {
       const targets = getDefectTargets(d.code);
       return {
         ...d,
+        serial: index + 1,
         fieldTargets: getDefectFieldLabels(d.code),
         targetTexts: targets?.texts || [],
         targetAttachments: targets?.attachments || [],

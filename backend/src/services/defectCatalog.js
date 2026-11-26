@@ -26,37 +26,37 @@ const DEFECTS = [
   },
   {
     "code": "56",
-    "label": "Authorization letter/Board Resolution not submitted – Central/State Government (Rule 3(2))",
+    "label": "From Govt Authorities - Rule 3(2)",
     "communication": "As per Rule 3(2) of the Chartered Accountants (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007, A Complaint filed by or on behalf of the Central Government or any State Government, shall be authorized by an officer holding a post not below the rank of a Joint Secretary or equivalent and shall be signed by an officer holding a post not below the rank of an Under Secretary or equivalent in the Central or State Government, as the case may be.” Accordingly, you are requested to submit an authorization in your favour made by an officer holding a post not below the rank of a Joint Secretary or equivalent to file the instant complaint with the Institute against the aforesaid Member.",
     "relevantColumn": "Column 1 of Form I and verification part"
   },
   {
     "code": "58",
-    "label": "Authorization letter/Board Resolution not submitted – Statutory Authority (Rule 3(3))",
+    "label": "From RBI OR SEBI - Rule 3(3)",
     "communication": "As per Rule 3(3) of the Chartered Accountants (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007, “A Complaint filed by or on behalf of any statutory authority, such as Reserve Bank of India or Securities  and Exchange Board of India, shall be authorized by an officer holding a post equivalent to the post of Joint Secretary in the Government of India and shall be signed by an officer holding a post not below the rank of an under Secretary or equivalent in the Central or State Government, as the case may be.”\r\n\r\n\tOn perusal of your complaint, it is not clear whether the rank of ______________ is equivalent to the rank of Joint Secretary or not. Accordingly, you are requested to make it clear whether the rank of signatory to the complaint is equivalent to that of Joint Secretary. If not, an authorization in favour of the Complainant made by an officer holding a post not below the rank of a Joint Secretary or equivalent to file the instant complaint be submitted, within 15 days of receipt of this letter.",
     "relevantColumn": "Column 1 of Form I and verification part"
   },
   {
     "code": "60",
-    "label": "Authorization letter/Board Resolution not submitted – Bank General Resolution/Power of Attorney (Rule 3(4))",
+    "label": "From Banks - Rule 3(4)",
     "communication": "The Authorisation letter has not been submitted by you, as per the requirement of Rule 3(4) of the Chartered Accountants (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007.  Since, you are filing this complaint as ___________________ of ___________Bank, you are requested to submit certified true copy of the General Resolution or Power of Attorney, authorising you to file complaint on behalf of ___________________Bank.",
     "relevantColumn": "Column 1 of Form I and verification part"
   },
   {
     "code": "62",
-    "label": "Authorization letter/Board Resolution not submitted – Company Board Resolution (Rule 3(4))",
+    "label": "From Companies - Rule 3(4)",
     "communication": "You have not submitted the Authorisation letter/Board Resolution as per the requirement of Rule 3(4) of the Chartered Accountants (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007. Since, you are filing the complaint on behalf of  M/s _____________________, a resolution/authorization duly passed by the Board of Directors or a certified copy of the extract of such resolution duly signed by the authorized Director or Company Secretary of the Company, specifically authorising you to file the instant complaint with the Institute against the aforesaid firm on behalf of M/s_______________ and also specifically authorise you to sign all documents, forms, papers, application etc. related to instant complaint and to appear before the ICAI or any of its Committees is required to be submitted to this office. (IN ORIGINAL) Or else, if you want to file this complaint in your individual capacity, you may kindly submit a clarification in this regard.",
     "relevantColumn": "Column 1 of Form I and verification part"
   },
   {
     "code": "64",
-    "label": "Authorization letter/Board Resolution not submitted – Firm Partner Authorization (Rule 3(4))",
+    "label": "CA Firm or any partnership firm - Rule 3(4)",
     "communication": "You have not submitted the Authorisation letter/Board Resolution as per the requirement of Rule 3(4) of the Chartered Accountants (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007. Since, you are filing the complaint as a partner of firm, a  resolution/authorization duly passed by all partners, specifically authorising you to file the instant complaint with the Institute against the aforesaid firm on behalf of complainat firm, is required to be submitted to this office. (IN ORIGINAL) Or else, if you want to file this complaint in your individual capacity, you may submit a clarification in this regard.",
     "relevantColumn": "Column 1 of Form I and verification part"
   },
   {
     "code": "66",
-    "label": "Authorization letter/Board Resolution not submitted – Trust Managing Committee Resolution (Rule 3(4))",
+    "label": "Society or Trust or Association - Rule 3(4)",
     "communication": "You have not submitted the Resolution as per the requirement of Rule 3(4) of the Chartered Accountants (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007. Since, you are filing the complaint on behalf of M/s_________________, a resolution duly passed by the Managing Committee of the Trust, specifically authorising you to file the instant complaint with the Institute against the aforesaid member on behalf of M/s _____________________ and also specifically authorise you to sign all documents, forms, papers, application etc. related to instant complaint and to appear before the ICAI or any of its Committees is required to be submitted to this office. (IN ORIGINAL) Or else, if you want to file this complaint in your individual capacity, you may kindly submit a clarification in this regard.",
     "relevantColumn": "Column 1 of Form I and verification part"
   },
